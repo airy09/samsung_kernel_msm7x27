@@ -1,7 +1,7 @@
 /* arch/arm/mach-msm/smd_rpcrouter_device.c
  *
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2007-2010, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2007 QUALCOMM Incorporated
  * Author: San Mehat <san@android.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -14,7 +14,6 @@
  * GNU General Public License for more details.
  *
  */
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
@@ -27,21 +26,14 @@
 #include <linux/fs.h>
 #include <linux/err.h>
 #include <linux/sched.h>
+#include <linux/slab.h>
 #include <linux/poll.h>
-#include <linux/platform_device.h>
-#include <linux/msm_rpcrouter.h>
-
 #include <asm/uaccess.h>
 #include <asm/byteorder.h>
+#include <linux/platform_device.h>
 
-#include <mach/peripheral-loader.h>
+#include <linux/msm_rpcrouter.h>
 #include "smd_rpcrouter.h"
-
-/* Support 64KB of data plus some space for headers */
-#define SAFETY_MEM_SIZE (65536 + sizeof(struct rpc_request_hdr))
-
-/* modem load timeout */
-#define MODEM_LOAD_TIMEOUT (10 * HZ)
 
 /* Next minor # available for a remote server */
 static int next_minor = 1;
@@ -52,113 +44,39 @@ dev_t msm_rpcrouter_devno;
 static struct cdev rpcrouter_cdev;
 static struct device *rpcrouter_device;
 
-struct rpcrouter_file_info {
-	struct msm_rpc_endpoint *ept;
-	void *modem_pil;
-};
-
-static void msm_rpcrouter_unload_modem(void *pil)
-{
-	if (pil)
-		pil_put(pil);
-}
-
-static void *msm_rpcrouter_load_modem(void)
-{
-	void *pil;
-	int rc;
-
-	pil = pil_get("modem");
-	if (IS_ERR(pil))
-		pr_err("%s: modem load failed\n", __func__);
-	else {
-		rc = wait_for_completion_interruptible_timeout(
-						&rpc_remote_router_up,
-						MODEM_LOAD_TIMEOUT);
-		if (!rc)
-			rc = -ETIMEDOUT;
-		if (rc < 0) {
-			pr_err("%s: wait for remote router failed %d\n",
-			       __func__, rc);
-			msm_rpcrouter_unload_modem(pil);
-			pil = ERR_PTR(rc);
-		}
-	}
-
-	return pil;
-}
-
 static int rpcrouter_open(struct inode *inode, struct file *filp)
 {
 	int rc;
-	void *pil;
 	struct msm_rpc_endpoint *ept;
-	struct rpcrouter_file_info *file_info;
 
 	rc = nonseekable_open(inode, filp);
 	if (rc < 0)
 		return rc;
 
-	file_info = kzalloc(sizeof(*file_info), GFP_KERNEL);
-	if (!file_info)
-		return -ENOMEM;
-
 	ept = msm_rpcrouter_create_local_endpoint(inode->i_rdev);
-	if (!ept) {
-		kfree(file_info);
+	if (!ept)
 		return -ENOMEM;
-	}
-	file_info->ept = ept;
 
-	/* if router device, load the modem */
-	if (inode->i_rdev == msm_rpcrouter_devno) {
-		pil = msm_rpcrouter_load_modem();
-		if (IS_ERR(pil)) {
-			kfree(file_info);
-			msm_rpcrouter_destroy_local_endpoint(ept);
-			return PTR_ERR(pil);
-		}
-		file_info->modem_pil = pil;
-	}
-
-	filp->private_data = file_info;
+	filp->private_data = ept;
 	return 0;
 }
 
 static int rpcrouter_release(struct inode *inode, struct file *filp)
 {
-	struct rpcrouter_file_info *file_info = filp->private_data;
 	struct msm_rpc_endpoint *ept;
-	static unsigned int rpcrouter_release_cnt;
+	ept = (struct msm_rpc_endpoint *) filp->private_data;
 
-	ept = (struct msm_rpc_endpoint *) file_info->ept;
-
-	/* A user program with many files open when ends abruptly,
-	 * will cause a flood of REMOVE_CLIENT messages to the
-	 * remote processor.  This will cause remote processors
-	 * internal queue to overflow. Inserting a sleep here
-	 * regularly is the effecient option.
-	 */
-	if (rpcrouter_release_cnt++ % 2)
-		msleep(1);
-
-	/* if router device, unload the modem */
-	if (inode->i_rdev == msm_rpcrouter_devno)
-		msm_rpcrouter_unload_modem(file_info->modem_pil);
-
-	kfree(file_info);
 	return msm_rpcrouter_destroy_local_endpoint(ept);
 }
 
 static ssize_t rpcrouter_read(struct file *filp, char __user *buf,
 			      size_t count, loff_t *ppos)
 {
-	struct rpcrouter_file_info *file_info = filp->private_data;
 	struct msm_rpc_endpoint *ept;
 	struct rr_fragment *frag, *next;
 	int rc;
 
-	ept = (struct msm_rpc_endpoint *) file_info->ept;
+	ept = (struct msm_rpc_endpoint *) filp->private_data;
 
 	rc = __msm_rpc_read(ept, &frag, count, -1);
 	if (rc < 0)
@@ -184,15 +102,13 @@ static ssize_t rpcrouter_read(struct file *filp, char __user *buf,
 static ssize_t rpcrouter_write(struct file *filp, const char __user *buf,
 				size_t count, loff_t *ppos)
 {
-	struct rpcrouter_file_info *file_info = filp->private_data;
 	struct msm_rpc_endpoint	*ept;
 	int rc = 0;
 	void *k_buffer;
 
-	ept = (struct msm_rpc_endpoint *) file_info->ept;
+	ept = (struct msm_rpc_endpoint *) filp->private_data;
 
-	/* A check for safety, this seems non-standard */
-	if (count > SAFETY_MEM_SIZE)
+	if (count > RPCROUTER_MSGSIZE_MAX)
 		return -EINVAL;
 
 	k_buffer = kmalloc(count, GFP_KERNEL);
@@ -217,27 +133,20 @@ write_out_free:
 static unsigned int rpcrouter_poll(struct file *filp,
 				   struct poll_table_struct *wait)
 {
-	struct rpcrouter_file_info *file_info = filp->private_data;
 	struct msm_rpc_endpoint *ept;
 	unsigned mask = 0;
-
-	ept = (struct msm_rpc_endpoint *) file_info->ept;
+	ept = (struct msm_rpc_endpoint *) filp->private_data;
 
 	/* If there's data already in the read queue, return POLLIN.
 	 * Else, wait for the requested amount of time, and check again.
 	 */
-
 	if (!list_empty(&ept->read_q))
 		mask |= POLLIN;
-	if (ept->restart_state != 0)
-		mask |= POLLERR;
 
 	if (!mask) {
 		poll_wait(filp, &ept->wait_q, wait);
 		if (!list_empty(&ept->read_q))
 			mask |= POLLIN;
-		if (ept->restart_state != 0)
-			mask |= POLLERR;
 	}
 
 	return mask;
@@ -246,13 +155,12 @@ static unsigned int rpcrouter_poll(struct file *filp,
 static long rpcrouter_ioctl(struct file *filp, unsigned int cmd,
 			    unsigned long arg)
 {
-	struct rpcrouter_file_info *file_info = filp->private_data;
 	struct msm_rpc_endpoint *ept;
 	struct rpcrouter_ioctl_server_args server_args;
-	int rc = 0;
+	int rc;
 	uint32_t n;
 
-	ept = (struct msm_rpc_endpoint *) file_info->ept;
+	ept = (struct msm_rpc_endpoint *) filp->private_data;
 	switch (cmd) {
 
 	case RPC_ROUTER_IOCTL_GET_VERSION:
@@ -289,14 +197,6 @@ static long rpcrouter_ioctl(struct file *filp, unsigned int cmd,
 					  server_args.vers);
 		break;
 
-	case RPC_ROUTER_IOCTL_CLEAR_NETRESET:
-		msm_rpc_clear_netreset(ept);
-		break;
-
-	case RPC_ROUTER_IOCTL_GET_CURR_PKT_SIZE:
-		rc = msm_rpc_get_curr_pkt_size(ept);
-		break;
-
 	default:
 		rc = -EINVAL;
 		break;
@@ -328,7 +228,6 @@ static struct file_operations rpcrouter_router_fops = {
 int msm_rpcrouter_create_server_cdev(struct rr_server *server)
 {
 	int rc;
-	uint32_t dev_vers;
 
 	if (next_minor == RPCROUTER_MAX_REMOTE_SERVERS) {
 		printk(KERN_ERR
@@ -336,25 +235,13 @@ int msm_rpcrouter_create_server_cdev(struct rr_server *server)
 		       "RPCROUTER_MAX_REMOTE_SERVERS\n");
 		return -ENOBUFS;
 	}
-
-	/* Servers with bit 31 set are remote msm servers with hashkey version.
-	 * Servers with bit 31 not set are remote msm servers with
-	 * backwards compatible version type in which case the minor number
-	 * (lower 16 bits) is set to zero.
-	 *
-	 */
-	if ((server->vers & 0x80000000))
-		dev_vers = server->vers;
-	else
-		dev_vers = server->vers & 0xffff0000;
-
 	server->device_number =
 		MKDEV(MAJOR(msm_rpcrouter_devno), next_minor++);
 
 	server->device =
 		device_create(msm_rpcrouter_class, rpcrouter_device,
 			      server->device_number, NULL, "%.8x:%.8x",
-			      server->prog, dev_vers);
+			      server->prog, server->vers);
 	if (IS_ERR(server->device)) {
 		printk(KERN_ERR
 		       "rpcrouter: Unable to create device (%ld)\n",
@@ -375,17 +262,12 @@ int msm_rpcrouter_create_server_cdev(struct rr_server *server)
 	return 0;
 }
 
-/* for backward compatible version type (31st bit cleared)
- * clearing minor number (lower 16 bits) in device name
- * is neccessary for driver binding
- */
 int msm_rpcrouter_create_server_pdev(struct rr_server *server)
 {
-	sprintf(server->pdev_name, "rs%.8x", server->prog);
+	sprintf(server->pdev_name, "rs%.8x:%.8x",
+		server->prog, server->vers);
 
-	server->p_device.base.id = (server->vers & RPC_VERSION_MODE_MASK) ?
-				   server->vers :
-				   (server->vers & RPC_VERSION_MAJOR_MASK);
+	server->p_device.base.id = -1;
 	server->p_device.base.name = server->pdev_name;
 
 	server->p_device.prog = server->prog;
