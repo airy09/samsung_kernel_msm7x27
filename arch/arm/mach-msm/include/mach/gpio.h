@@ -16,35 +16,32 @@
 #ifndef __ASM_ARCH_MSM_GPIO_H
 #define __ASM_ARCH_MSM_GPIO_H
 
-#ifdef CONFIG_ARCH_MSM8X60
-#define ARCH_NR_GPIOS 512
-#endif
-
 #include <linux/interrupt.h>
+
+int gpio_request(unsigned gpio, const char *label);
+void gpio_free(unsigned gpio);
+int gpio_direction_input(unsigned gpio);
+int gpio_direction_output(unsigned gpio, int value);
+int gpio_get_value(unsigned gpio);
+void gpio_set_value(unsigned gpio, int value);
+int gpio_to_irq(unsigned gpio);
+
 #include <asm-generic/gpio.h>
-#include <mach/irqs.h>
 
-#define FIRST_BOARD_GPIO	NR_GPIO_IRQS
+/* extended gpio api */
 
-static inline int gpio_get_value(unsigned gpio)
-{
-	return __gpio_get_value(gpio);
-}
+#define GPIOF_IRQF_MASK         0x0000ffff /* use to specify edge detection without */
+#define GPIOF_IRQF_TRIGGER_NONE 0x00010000 /* IRQF_TRIGGER_NONE is 0 which also means "as already configured" */
+#define GPIOF_INPUT             0x00020000
+#define GPIOF_DRIVE_OUTPUT      0x00040000
+#define GPIOF_OUTPUT_LOW        0x00080000
+#define GPIOF_OUTPUT_HIGH       0x00100000
 
-static inline void gpio_set_value(unsigned gpio, int value)
-{
-	__gpio_set_value(gpio, value);
-}
+#define GPIOIRQF_SHARED         0x00000001 /* the irq line is shared with other inputs */
 
-static inline int gpio_cansleep(unsigned gpio)
-{
-	return __gpio_cansleep(gpio);
-}
-
-static inline int gpio_to_irq(unsigned gpio)
-{
-	return __gpio_to_irq(gpio);
-}
+extern int gpio_configure(unsigned int gpio, unsigned long flags);
+extern int gpio_read_detect_status(unsigned int gpio);
+extern int gpio_clear_detect_status(unsigned int gpio);
 
 /**
  * struct msm_gpio - GPIO pin description
@@ -114,7 +111,7 @@ int msm_gpios_enable(const struct msm_gpio *table, int size);
  * @table: GPIO table
  * @size:  number of entries in @table
  */
-int msm_gpios_disable(const struct msm_gpio *table, int size);
+void msm_gpios_disable(const struct msm_gpio *table, int size);
 
 /* GPIO TLMM (Top Level Multiplexing) Definitions */
 
@@ -168,52 +165,5 @@ enum {
 #define GPIO_DRVSTR(gpio_cfg) (((gpio_cfg) >> 17) & 0xf)
 
 int gpio_tlmm_config(unsigned config, unsigned disable);
-
-enum msm_tlmm_hdrive_tgt {
-	TLMM_HDRV_SDC4_CLK = 0,
-	TLMM_HDRV_SDC4_CMD,
-	TLMM_HDRV_SDC4_DATA,
-	TLMM_HDRV_SDC3_CLK,
-	TLMM_HDRV_SDC3_CMD,
-	TLMM_HDRV_SDC3_DATA,
-};
-
-enum msm_tlmm_pull_tgt {
-	TLMM_PULL_SDC4_CMD = 0,
-	TLMM_PULL_SDC4_DATA,
-	TLMM_PULL_SDC3_CMD,
-	TLMM_PULL_SDC3_DATA,
-};
-
-#ifdef CONFIG_MSM_V2_TLMM
-void msm_tlmm_set_hdrive(enum msm_tlmm_hdrive_tgt tgt, int drv_str);
-void msm_tlmm_set_pull(enum msm_tlmm_pull_tgt tgt, int pull);
-
-/*
- * A GPIO can be set as a direct-connect IRQ.  This can be used to bypass
- * the normal summary-interrupt mechanism for those GPIO lines deemed to be
- * higher priority or otherwise worthy of special treatment, but resources
- * are limited: only a few DC interrupt lines are available.
- * Care must be taken when usurping a GPIO in this manner, as the summary
- * interrupt controller has no idea that the GPIO has been taken away from it.
- * Clients can still register to receive the summary interrupt assigned
- * to that GPIO, which will uninstall it as a direct connect IRQ with
- * no warning.
- *
- * The irq passed to this function is the DC IRQ number, not the
- * irq number seen by the scorpion when the interrupt triggers.  For example,
- * if 0 is specified, then when DC IRQ 0 triggers, the scorpion will see
- * interrupt TLMM_SCSS_DIR_CONN_IRQ_0.
- */
-int msm_gpio_install_direct_irq(unsigned gpio, unsigned irq);
-#else
-static inline void msm_tlmm_set_hdrive(enum msm_tlmm_hdrive_tgt tgt,
-				       int drv_str) {}
-static inline void msm_tlmm_set_pull(enum msm_tlmm_pull_tgt tgt, int pull) {}
-static inline int msm_gpio_install_direct_irq(unsigned gpio, unsigned irq)
-{
-	return -ENOSYS;
-}
-#endif
 
 #endif /* __ASM_ARCH_MSM_GPIO_H */
