@@ -1,7 +1,6 @@
 /* arch/arm/mach-msm/smd_tty.c
  *
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2009-2010, Code Aurora Forum. All rights reserved.
  * Author: Brian Swetland <swetland@google.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -19,66 +18,46 @@
 #include <linux/fs.h>
 #include <linux/cdev.h>
 #include <linux/device.h>
-#include <linux/interrupt.h>
-#include <linux/delay.h>
-#include <linux/wakelock.h>
+#include <linux/wait.h>
 
 #include <linux/tty.h>
 #include <linux/tty_driver.h>
 #include <linux/tty_flip.h>
 
 #include <mach/msm_smd.h>
-#include "smd_private.h"
 
-#define MAX_SMD_TTYS 37
+#define MAX_SMD_TTYS 32
 
 static DEFINE_MUTEX(smd_tty_lock);
 
 struct smd_tty_info {
 	smd_channel_t *ch;
 	struct tty_struct *tty;
-	struct wake_lock wake_lock;
 	int open_count;
-	struct tasklet_struct tty_tsklt;
-	struct timer_list buf_req_timer;
 };
 
 static struct smd_tty_info smd_tty[MAX_SMD_TTYS];
 
-static void buf_req_retry(unsigned long param)
-{
-	struct smd_tty_info *info = (struct smd_tty_info *)param;
-	tasklet_hi_schedule(&info->tty_tsklt);
-}
 
-static void smd_tty_read(unsigned long param)
+static void smd_tty_notify(void *priv, unsigned event)
 {
 	unsigned char *ptr;
 	int avail;
-	struct smd_tty_info *info = (struct smd_tty_info *)param;
+	struct smd_tty_info *info = priv;
 	struct tty_struct *tty = info->tty;
 
 	if (!tty)
 		return;
 
+	if (event != SMD_EVENT_DATA)
+		return;
+
 	for (;;) {
 		if (test_bit(TTY_THROTTLED, &tty->flags)) break;
 		avail = smd_read_avail(info->ch);
-		if (avail == 0)
-			break;
+		if (avail == 0) break;
 
 		avail = tty_prepare_flip_string(tty, &ptr, avail);
-		if (avail <= 0) {
-			if (!timer_pending(&info->buf_req_timer)) {
-				init_timer(&info->buf_req_timer);
-				info->buf_req_timer.expires = jiffies +
-							((30 * HZ)/1000);
-				info->buf_req_timer.function = buf_req_retry;
-				info->buf_req_timer.data = param;
-				add_timer(&info->buf_req_timer);
-			}
-			return;
-		}
 
 		if (smd_read(info->ch, ptr, avail) != avail) {
 			/* shouldn't be possible since we're in interrupt
@@ -88,22 +67,11 @@ static void smd_tty_read(unsigned long param)
 			printk(KERN_ERR "OOPS - smd_tty_buffer mismatch?!");
 		}
 
-		wake_lock_timeout(&info->wake_lock, HZ / 2);
 		tty_flip_buffer_push(tty);
 	}
 
 	/* XXX only when writable and necessary */
 	tty_wakeup(tty);
-}
-
-static void smd_tty_notify(void *priv, unsigned event)
-{
-	struct smd_tty_info *info = priv;
-
-	if (event != SMD_EVENT_DATA)
-		return;
-
-	tasklet_hi_schedule(&info->tty_tsklt);
 }
 
 static int smd_tty_open(struct tty_struct *tty, struct file *f)
@@ -113,18 +81,13 @@ static int smd_tty_open(struct tty_struct *tty, struct file *f)
 	struct smd_tty_info *info;
 	const char *name;
 
-	if (n == 0)
-		name = "DS";
-	else if (n == 7)
-		name = "DATA1";
-	else if (n == 21)
-		name = "DATA21";
-	else if (n == 27)
-		name = "GPSNMEA";
-	else if (n == 36)
-		name = "LOOPBACK";
-	else
+	if (n == 0) {
+		name = "SMD_DS";
+	} else if (n == 27) {
+		name = "SMD_GPSNMEA";
+	} else {
 		return -ENODEV;
+	}
 
 	info = smd_tty + n;
 
@@ -133,23 +96,10 @@ static int smd_tty_open(struct tty_struct *tty, struct file *f)
 
 	if (info->open_count++ == 0) {
 		info->tty = tty;
-		tasklet_init(&info->tty_tsklt, smd_tty_read,
-			     (unsigned long)info);
-		wake_lock_init(&info->wake_lock, WAKE_LOCK_SUSPEND, name);
-		if (!info->ch) {
-			if (n == 36) {
-				/* set smsm state to SMSM_SMD_LOOPBACK state
-				** and wait allowing enough time for Modem side
-				** to open the loopback port (Currently, this is
-				** this is effecient than polling).
-				*/
-				smsm_change_state(SMSM_APPS_STATE,
-						  0, SMSM_SMD_LOOPBACK);
-				msleep(100);
-			}
-
-			res = smd_open(name, &info->ch, info,
-				       smd_tty_notify);
+		if (info->ch) {
+			smd_kick(info->ch);
+		} else {
+			res = smd_open(name, &info->ch, info, smd_tty_notify);
 		}
 	}
 	mutex_unlock(&smd_tty_lock);
@@ -168,9 +118,6 @@ static void smd_tty_close(struct tty_struct *tty, struct file *f)
 	if (--info->open_count == 0) {
 		info->tty = 0;
 		tty->driver_data = 0;
-		del_timer(&info->buf_req_timer);
-		tasklet_kill(&info->tty_tsklt);
-		wake_lock_destroy(&info->wake_lock);
 		if (info->ch) {
 			smd_close(info->ch);
 			info->ch = 0;
@@ -210,23 +157,7 @@ static int smd_tty_chars_in_buffer(struct tty_struct *tty)
 static void smd_tty_unthrottle(struct tty_struct *tty)
 {
 	struct smd_tty_info *info = tty->driver_data;
-	tasklet_hi_schedule(&info->tty_tsklt);
-	return;
-}
-
-static int smd_tty_tiocmget(struct tty_struct *tty, struct file *file)
-{
-	struct smd_tty_info *info = tty->driver_data;
-
-	return smd_tiocmget(info->ch);
-}
-
-static int smd_tty_tiocmset(struct tty_struct *tty, struct file *file,
-				unsigned int set, unsigned int clear)
-{
-	struct smd_tty_info *info = tty->driver_data;
-
-	return smd_tiocmset(info->ch, set, clear);
+	smd_kick(info->ch);
 }
 
 static struct tty_operations smd_tty_ops = {
@@ -236,8 +167,6 @@ static struct tty_operations smd_tty_ops = {
 	.write_room = smd_tty_write_room,
 	.chars_in_buffer = smd_tty_chars_in_buffer,
 	.unthrottle = smd_tty_unthrottle,
-	.tiocmget = smd_tty_tiocmget,
-	.tiocmset = smd_tty_tiocmset,
 };
 
 static struct tty_driver *smd_tty_driver;
@@ -271,10 +200,7 @@ static int __init smd_tty_init(void)
 
 	/* this should be dynamic */
 	tty_register_device(smd_tty_driver, 0, 0);
-	tty_register_device(smd_tty_driver, 7, 0);
-	tty_register_device(smd_tty_driver, 21, 0);
 	tty_register_device(smd_tty_driver, 27, 0);
-	tty_register_device(smd_tty_driver, 36, 0);
 
 	return 0;
 }
