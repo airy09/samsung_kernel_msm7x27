@@ -12,7 +12,7 @@ REFERENCES
   None
 
   
-Copyright (c) 1992-2009, Code Aurora Forum. All rights reserved.
+Copyright(c) 1992 - 2009 by QUALCOMM, Incorporated.
 
 This software is licensed under the terms of the GNU General Public
 License version 2, as published by the Free Software Foundation, and
@@ -54,31 +54,4 @@ typedef struct{
   unsigned int	bitstarem_buf_start;
   unsigned int	bitstream_buf_len;
 } __attribute__((packed)) audplay_msg_dec_needs_data;
-
-#define AUDPLAY_UP_STREAM_INFO 0x0003
-#define AUDPLAY_UP_STREAM_INFO_LEN \
-  sizeof(struct audplay_msg_stream_info)
-
-struct audplay_msg_stream_info {
-  unsigned int decoder_id;
-  unsigned int channel_info;
-  unsigned int sample_freq;
-  unsigned int bitstream_info;
-  unsigned int bit_rate;
-} __attribute__((packed));
-
-#define AUDPLAY_MSG_BUFFER_UPDATE 0x0004
-#define AUDPLAY_MSG_BUFFER_UPDATE_LEN \
-  sizeof(struct audplay_msg_buffer_update)
-
-struct audplay_msg_buffer_update {
-  unsigned int buffer_write_count;
-  unsigned int num_of_buffer;
-  unsigned int buf0_address;
-  unsigned int buf0_length;
-  unsigned int buf1_address;
-  unsigned int buf1_length;
-} __attribute__((packed));
-
-#define ADSP_MESSAGE_ID 0xFFFF
 #endif /* QDSP5AUDPLAYMSG_H */

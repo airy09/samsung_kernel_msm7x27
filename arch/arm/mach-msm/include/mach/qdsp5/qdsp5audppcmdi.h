@@ -15,7 +15,7 @@ REFERENCES
 EXTERNALIZED FUNCTIONS
   None
 
-Copyright (c) 1992-2009, Code Aurora Forum. All rights reserved.
+Copyright(c) 1992 - 2008 by QUALCOMM, Incorporated.
 
 This software is licensed under the terms of the GNU General Public
 License version 2, as published by the Free Software Foundation, and
@@ -94,7 +94,7 @@ typedef struct {
  */
 
 #define AUDPP_CMD_DEC_CTRL		0x0002
-#define AUDPP_CMD_DEC_CTRL_LEN		sizeof(audpp_cmd_dec_ctrl)
+#define AUDPP_CMD_DEC_CTRL_LEN		sizeof(audpp_cmd_dec_ctrl);
 
 /* Decoder control commands for pause, resume and flush */
 #define AUDPP_CMD_FLUSH_V         		0x2000
@@ -205,15 +205,6 @@ typedef struct {
 	unsigned short byte_counter_msw;
 } __attribute__((packed)) audpp_cmd_avsync_cmd_3;
 
-#define AUDPP_CMD_ROUTING_MODE      0x0008
-#define AUDPP_CMD_ROUTING_MODE_LEN  \
-sizeof(struct audpp_cmd_routing_mode)
-
-struct audpp_cmd_routing_mode {
-  unsigned short cmd_id;
-  unsigned short object_number;
-  unsigned short routing_mode;
-} __attribute__((packed));
 
 /*
  * Commands Related to uPAudPPCmd2Queue
@@ -274,7 +265,7 @@ typedef struct {
 
 #define AUDPP_CMD_WAV_PCM_WIDTH_8	0x0000
 #define AUDPP_CMD_WAV_PCM_WIDTH_16	0x0001
-#define AUDPP_CMD_WAV_PCM_WIDTH_24	0x0002
+#define AUDPP_CMD_WAV_PCM_WIDTH_32	0x0002
 
 typedef struct {
 	audpp_cmd_cfg_adec_params_common		common;
@@ -301,44 +292,6 @@ typedef struct {
 } __attribute__((packed)) audpp_cmd_cfg_adec_params_adpcm;
 
 /*
- * Command Structure to configure Per decoder Parameters (WMA)
- */
-
-#define AUDPP_CMD_CFG_ADEC_PARAMS_WMA_LEN	\
-	sizeof(struct audpp_cmd_cfg_adec_params_wma)
-
-struct audpp_cmd_cfg_adec_params_wma {
-	audpp_cmd_cfg_adec_params_common    common;
-	unsigned short 	armdatareqthr;
-	unsigned short 	channelsdecoded;
-	unsigned short 	wmabytespersec;
-	unsigned short	wmasamplingfreq;
-	unsigned short	wmaencoderopts;
-} __attribute__((packed));
-
-/*
- * Command Structure to configure Per decoder Parameters (WMAPRO)
- */
-
-#define AUDPP_CMD_CFG_ADEC_PARAMS_WMAPRO_LEN	\
-	sizeof(struct audpp_cmd_cfg_adec_params_wmapro)
-
-struct audpp_cmd_cfg_adec_params_wmapro {
-	audpp_cmd_cfg_adec_params_common    common;
-	unsigned short 	armdatareqthr;
-	uint8_t         validbitspersample;
-	uint8_t         numchannels;
-	unsigned short  formattag;
-	unsigned short  samplingrate;
-	unsigned short  avgbytespersecond;
-	unsigned short  asfpacketlength;
-	unsigned short 	channelmask;
-	unsigned short 	encodeopt;
-	unsigned short	advancedencodeopt;
-	uint32_t	advancedencodeopt2;
-} __attribute__((packed));
-
-/*
  * Command Structure to configure Per decoder Parameters (MP3)
  */
 
@@ -360,8 +313,7 @@ typedef struct {
 
 #define AUDPP_CMD_AAC_FORMAT_ADTS		-1
 #define	AUDPP_CMD_AAC_FORMAT_RAW		0x0000
-#define	AUDPP_CMD_AAC_FORMAT_PSUEDO_RAW		0x0001
-#define	AUDPP_CMD_AAC_FORMAT_LOAS		0x0002
+#define	AUDPP_CMD_AAC_FORMAT_PSUEDO_RAW	0x0001
 
 #define AUDPP_CMD_AAC_AUDIO_OBJECT_LC		0x0002
 #define AUDPP_CMD_AAC_AUDIO_OBJECT_LTP		0x0004
@@ -383,44 +335,9 @@ typedef struct {
   unsigned short                        aac_spectral_data_resilience_flag;
   unsigned short                        sbr_on_flag;
   unsigned short                        sbr_ps_on_flag;
+  unsigned short                        dual_mono_mode;
   unsigned short                        channel_configuration;
 } __attribute__((packed)) audpp_cmd_cfg_adec_params_aac;
-
-/*
- * Command Structure to configure Per decoder Parameters (V13K)
- */
-
-#define AUDPP_CMD_CFG_ADEC_PARAMS_V13K_LEN	\
-	sizeof(struct audpp_cmd_cfg_adec_params_v13k)
-
-
-#define AUDPP_CMD_STEREO_CFG_MONO		0x0001
-#define AUDPP_CMD_STEREO_CFG_STEREO		0x0002
-
-struct audpp_cmd_cfg_adec_params_v13k {
-   audpp_cmd_cfg_adec_params_common    	common;
-   unsigned short			stereo_cfg;
-} __attribute__((packed));
-
-#define AUDPP_CMD_CFG_ADEC_PARAMS_EVRC_LEN \
-	sizeof(struct audpp_cmd_cfg_adec_params_evrc)
-
-struct audpp_cmd_cfg_adec_params_evrc {
-	audpp_cmd_cfg_adec_params_common common;
-	unsigned short stereo_cfg;
-} __attribute__ ((packed));
-
-/*
- * Command Structure to configure Per decoder Parameters (AMRWB)
- */
-
-struct audpp_cmd_cfg_adec_params_amrwb {
-	   audpp_cmd_cfg_adec_params_common     common;
-	      unsigned short                       stereo_cfg;
-} __attribute__((packed)) ;
-
-#define AUDPP_CMD_CFG_ADEC_PARAMS_AMRWB_LEN \
-	sizeof(struct audpp_cmd_cfg_adec_params_amrwb)
 
 /*
  * Command Structure to configure the  HOST PCM interface
@@ -529,25 +446,25 @@ typedef struct {
 #define AUDPP_CMD_CFG_OBJECT_PARAMS_COMMON_LEN		\
 	sizeof(audpp_cmd_cfg_object_params_common)
 
-#define AUDPP_CMD_OBJ0_UPDATE		0x8000
+#define AUDPP_CMD_OBJ0_UPDATE		0x0001
 #define AUDPP_CMD_OBJ0_DONT_UPDATE	0x0000
 
-#define AUDPP_CMD_OBJ1_UPDATE		0x8000
+#define AUDPP_CMD_OBJ1_UPDATE		0x0001
 #define AUDPP_CMD_OBJ1_DONT_UPDATE	0x0000
 
-#define AUDPP_CMD_OBJ2_UPDATE		0x8000
+#define AUDPP_CMD_OBJ2_UPDATE		0x0001
 #define AUDPP_CMD_OBJ2_DONT_UPDATE	0x0000
 
-#define AUDPP_CMD_OBJ3_UPDATE		0x8000
+#define AUDPP_CMD_OBJ3_UPDATE		0x0001
 #define AUDPP_CMD_OBJ3_DONT_UPDATE	0x0000
 
-#define AUDPP_CMD_OBJ4_UPDATE		0x8000
+#define AUDPP_CMD_OBJ4_UPDATE		0x0001
 #define AUDPP_CMD_OBJ4_DONT_UPDATE	0x0000
 
-#define AUDPP_CMD_HPCM_UPDATE		0x8000
+#define AUDPP_CMD_HPCM_UPDATE		0x0001
 #define AUDPP_CMD_HPCM_DONT_UPDATE	0x0000
 
-#define AUDPP_CMD_COMMON_CFG_UPDATE		0x8000
+#define AUDPP_CMD_COMMON_CFG_UPDATE		0x0001
 #define AUDPP_CMD_COMMON_CFG_DONT_UPDATE	0x0000
 
 typedef struct {
@@ -780,46 +697,18 @@ typedef struct {
 #define AUDPP_CMD_ADRC_FLAG_DIS		0x0000
 #define AUDPP_CMD_ADRC_FLAG_ENA		-1
 
-#define	AUDPP_MAX_MBADRC_BANDS		5
-#define	AUDPP_MBADRC_EXTERNAL_BUF_SIZE	196
-
-struct adrc_config {
-	uint16_t subband_enable;
-	uint16_t adrc_sub_mute;
-	uint16_t rms_time;
-	uint16_t compression_th;
-	uint16_t compression_slope;
-	uint16_t attack_const_lsw;
-	uint16_t attack_const_msw;
-	uint16_t release_const_lsw;
-	uint16_t release_const_msw;
-	uint16_t makeup_gain;
-};
-
 typedef struct {
 	audpp_cmd_cfg_object_params_common 	common;
-	uint16_t enable;
-	uint16_t num_bands;
-	uint16_t down_samp_level;
-	uint16_t adrc_delay;
-	uint16_t ext_buf_size;
-	uint16_t ext_partition;
-	uint16_t ext_buf_msw;
-	uint16_t ext_buf_lsw;
-	struct adrc_config adrc_band[AUDPP_MAX_MBADRC_BANDS];
-} __attribute__((packed)) audpp_cmd_cfg_object_params_mbadrc;
-
-struct audpp_cmd_cfg_object_params_adrc {
-	unsigned short	adrc_flag;
-	unsigned short	compression_th;
-	unsigned short	compression_slope;
-	unsigned short	rms_time;
-	unsigned short	attack_const_lsw;
-	unsigned short	attack_const_msw;
-	unsigned short	release_const_lsw;
-	unsigned short	release_const_msw;
-	unsigned short	adrc_delay;
-};
+	signed short				adrc_flag;
+	unsigned short				compression_th;
+	unsigned short				compression_slope;
+	unsigned short				rms_time;
+	unsigned short				attack_const_lsw;
+	unsigned short				attack_const_msw;
+	unsigned short				release_const_lsw;
+	unsigned short				release_const_msw;
+	unsigned short				adrc_system_delay;
+} __attribute__((packed)) audpp_cmd_cfg_object_params_adrc;
 
 /*
  * Command Structure to configure post processing parameters(Spectrum Analizer)
@@ -861,24 +750,11 @@ typedef struct {
 typedef struct {
 	audpp_cmd_cfg_object_params_common 	common;
 	signed short				enable_flag;
-	signed short				op_mode;
+	signed short				output_mode;
 	signed short				gain;
 	signed short				expansion;
 	signed short				delay;
 	unsigned short				stages_per_mode;
-	unsigned short				reverb_enable;
-	unsigned short				decay_msw;
-	unsigned short				decay_lsw;
-	unsigned short				decay_time_ratio_msw;
-	unsigned short				decay_time_ratio_lsw;
-	unsigned short				reflection_delay_time;
-	unsigned short				late_reverb_gain;
-	unsigned short				late_reverb_delay;
-	unsigned short                          delay_buff_size_msw;
-	unsigned short                          delay_buff_size_lsw;
-	unsigned short                          partition_num;
-	unsigned short                          delay_buff_start_msw;
-	unsigned short                          delay_buff_start_lsw;
 } __attribute__((packed)) audpp_cmd_cfg_object_params_qconcert;
 
 /*

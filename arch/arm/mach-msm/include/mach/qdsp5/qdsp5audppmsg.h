@@ -14,7 +14,7 @@ REFERENCES
 EXTERNALIZED FUNCTIONS
   None  
   
-Copyright (c) 1992-2009, Code Aurora Forum. All rights reserved.
+Copyright(c) 1992 - 2009 by QUALCOMM, Incorporated.
 
 This software is licensed under the terms of the GNU General Public
 License version 2, as published by the Free Software Foundation, and
@@ -53,13 +53,12 @@ Notice that changes are listed in reverse chronological order.
 	sizeof(audpp_msg_status_msg)
 
 #define AUDPP_MSG_STATUS_SLEEP		0x0000
-#define AUDPP_MSG_STATUS_INIT		0x0001
-#define AUDPP_MSG_STATUS_CFG		0x0002
+#define AUDPP_MSG__STATUS_INIT		0x0001
+#define AUDPP_MSG_MSG_STATUS_CFG	0x0002
 #define AUDPP_MSG_STATUS_PLAY		0x0003
 
-#define AUDPP_MSG_REASON_NONE	0x0000
+#define AUDPP_MSG_REASON_MIPS	0x0000
 #define AUDPP_MSG_REASON_MEM	0x0001
-#define AUDPP_MSG_REASON_NODECODER 0x0002
 
 typedef struct{
 	unsigned short dec_id;
@@ -305,17 +304,5 @@ typedef struct {
 	unsigned short	hpcm_obj_volume;
 } __attribute__((packed)) audpp_msg_qreverb_volume;
 
-#define AUDPP_MSG_ROUTING_ACK 0x0009
-#define AUDPP_MSG_ROUTING_ACK_LEN \
-  sizeof(struct audpp_msg_routing_ack)
-
-struct audpp_msg_routing_ack {
-  unsigned short dec_id;
-  unsigned short routing_mode;
-} __attribute__((packed));
-
-#define AUDPP_MSG_FLUSH_ACK 0x000A
-
-#define ADSP_MESSAGE_ID 0xFFFF
 
 #endif /* QDSP5AUDPPMSG_H */

@@ -1,6 +1,6 @@
 /* arch/arm/mach-msm/qdsp5/adsp_6225.h
  *
- * Copyright (c) 2008-2009, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2008 QUALCOMM Incorporated.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -33,8 +33,7 @@ typedef enum {
 	QDSP_MODULE_AUDRECTASK,
 	QDSP_MODULE_AUDPREPROCTASK,
 	QDSP_MODULE_SBC_ENC,
-	QDSP_MODULE_VOC_UMTS,
-	QDSP_MODULE_VOC_CDMA,
+	QDSP_MODULE_VOC,
 	QDSP_MODULE_VOC_PCM,
 	QDSP_MODULE_VOCENCTASK,
 	QDSP_MODULE_VOCDECTASK,
@@ -285,7 +284,7 @@ static uint32_t *qdsp_queue_offset_table[] = {
 
 #define QDSP_MODULE(n, clkname, clkrate, verify_cmd_func, patch_event_func) \
 	{ .name = #n, .pdev_name = "adsp_" #n, .id = QDSP_MODULE_##n, \
-	  .clk_name = clkname, .clk_rate = clkrate, \
+	  .clk_name=clkname, .clk_rate=clkrate, \
 	  .verify_cmd = verify_cmd_func, .patch_event = patch_event_func }
 
 static struct adsp_module_info module_info[] = {
@@ -293,17 +292,12 @@ static struct adsp_module_info module_info[] = {
 	QDSP_MODULE(AUDPPTASK, NULL, 0, NULL, NULL),
 	QDSP_MODULE(AUDRECTASK, NULL, 0, NULL, NULL),
 	QDSP_MODULE(AUDPREPROCTASK, NULL, 0, NULL, NULL),
-	QDSP_MODULE(VFETASK, "vfe_clk", 0, adsp_vfe_verify_cmd,
-		adsp_vfe_patch_event),
+	QDSP_MODULE(VFETASK, "vfe_clk", 0, adsp_vfe_verify_cmd, adsp_vfe_patch_event),
 	QDSP_MODULE(QCAMTASK, NULL, 0, NULL, NULL),
 	QDSP_MODULE(LPMTASK, NULL, 0, adsp_lpm_verify_cmd, NULL),
-	QDSP_MODULE(JPEGTASK, "vdc_clk", 0, adsp_jpeg_verify_cmd,
-		adsp_jpeg_patch_event),
-	QDSP_MODULE(VIDEOTASK, "vdc_clk", 96000000,
-		adsp_video_verify_cmd, NULL),
+	QDSP_MODULE(JPEGTASK, "vdc_clk", 0, adsp_jpeg_verify_cmd, adsp_jpeg_patch_event),
+	QDSP_MODULE(VIDEOTASK, "vdc_clk", 96000000, adsp_video_verify_cmd, NULL),
 	QDSP_MODULE(VDEC_LP_MODE, NULL, 0, NULL, NULL),
-	QDSP_MODULE(VIDEOENCTASK, "vdc_clk", 96000000,
-		adsp_videoenc_verify_cmd, NULL),
 };
 
 int adsp_init_info(struct adsp_info *info)
