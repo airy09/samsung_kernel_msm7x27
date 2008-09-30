@@ -152,6 +152,12 @@ struct msm_camera_sensor_info {
 	struct msm_camera_sensor_strobe_flash_data *strobe_flash_data;
 };
 
+struct msm_camera_device_platform_data{
+	int sensor_reset;
+	int sensor_pwd;
+	int vcm_pwd;
+};
+
 struct clk;
 
 struct snd_endpoint {
