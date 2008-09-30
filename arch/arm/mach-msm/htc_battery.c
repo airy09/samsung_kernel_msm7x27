@@ -37,7 +37,7 @@ static struct wake_lock vbus_wake_lock;
 #endif
 
 /* rpc related */
-#define APP_BATT_PDEV_NAME		"rs30100001"
+#define APP_BATT_PDEV_NAME		"rs30100001:00000000"
 #define APP_BATT_PROG			0x30100001
 #define APP_BATT_VER			0
 #define HTC_PROCEDURE_BATTERY_NULL	0
@@ -579,10 +579,11 @@ static ssize_t htc_battery_show_property(struct device *dev,
                                 msecs_to_jiffies(cache_time)))
                 goto dont_need_update;
 	
-	if (htc_get_batt_info(&htc_batt_info.rep) < 0)
+	if (htc_get_batt_info(&htc_batt_info.rep) < 0) {
 		printk(KERN_ERR "%s: rpc failed!!!\n", __FUNCTION__);
-	else
+	} else {
 		htc_batt_info.update_time = jiffies;
+	}
 dont_need_update:
 	mutex_unlock(&htc_batt_info.rpc_lock);
 
@@ -627,9 +628,6 @@ dont_need_update:
 static int htc_battery_probe(struct platform_device *pdev)
 {
 	int i, rc;
-
-	if (pdev->id != (APP_BATT_VER & RPC_VERSION_MAJOR_MASK))
-		return -EINVAL;
 
 	/* init battery gpio */
 	if ((rc = init_batt_gpio()) < 0) {
