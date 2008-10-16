@@ -22,7 +22,7 @@
 #include <linux/wakelock.h>
 
 struct gpio_kp {
-	struct gpio_event_input_devs *input_devs;
+	struct input_dev *input_dev;
 	struct gpio_event_matrix_info *keypad_info;
 	struct hrtimer timer;
 	struct wake_lock wake_lock;
@@ -31,7 +31,6 @@ struct gpio_kp {
 	unsigned int key_state_changed:1;
 	unsigned int last_key_state_changed:1;
 	unsigned int some_keys_pressed:2;
-	unsigned int disabled_irq:1;
 	unsigned long keys_pressed[0];
 };
 
@@ -39,11 +38,9 @@ static void clear_phantom_key(struct gpio_kp *kp, int out, int in)
 {
 	struct gpio_event_matrix_info *mi = kp->keypad_info;
 	int key_index = out * mi->ninputs + in;
-	unsigned short keyentry = mi->keymap[key_index];
-	unsigned short keycode = keyentry & MATRIX_KEY_MASK;
-	unsigned short dev = keyentry >> MATRIX_CODE_BITS;
+	unsigned short keycode = mi->keymap[key_index];;
 
-	if (!test_bit(keycode, kp->input_devs->dev[dev]->key)) {
+	if (!test_bit(keycode, kp->input_dev->key)) {
 		if (mi->flags & GPIOKPF_PRINT_PHANTOM_KEYS)
 			pr_info("gpiomatrix: phantom key %x, %d-%d (%d-%d) "
 				"cleared\n", keycode, out, in,
@@ -108,11 +105,8 @@ static void report_key(struct gpio_kp *kp, int key_index, int out, int in)
 {
 	struct gpio_event_matrix_info *mi = kp->keypad_info;
 	int pressed = test_bit(key_index, kp->keys_pressed);
-	unsigned short keyentry = mi->keymap[key_index];
-	unsigned short keycode = keyentry & MATRIX_KEY_MASK;
-	unsigned short dev = keyentry >> MATRIX_CODE_BITS;
-
-	if (pressed != test_bit(keycode, kp->input_devs->dev[dev]->key)) {
+	unsigned short keycode = mi->keymap[key_index];
+	if (pressed != test_bit(keycode, kp->input_dev->key)) {
 		if (keycode == KEY_RESERVED) {
 			if (mi->flags & GPIOKPF_PRINT_UNMAPPED_KEYS)
 				pr_info("gpiomatrix: unmapped key, %d-%d "
@@ -125,17 +119,9 @@ static void report_key(struct gpio_kp *kp, int key_index, int out, int in)
 					"changed to %d\n", keycode,
 					out, in, mi->output_gpios[out],
 					mi->input_gpios[in], pressed);
-			input_report_key(kp->input_devs->dev[dev], keycode, pressed);
+			input_report_key(kp->input_dev, keycode, pressed);
 		}
 	}
-}
-
-static void report_sync(struct gpio_kp *kp)
-{
-	int i;
-
-	for (i = 0; i < kp->input_devs->count; i++)
-		input_sync(kp->input_devs->dev[i]);
 }
 
 static enum hrtimer_restart gpio_keypad_timer_func(struct hrtimer *timer)
@@ -181,14 +167,12 @@ static enum hrtimer_restart gpio_keypad_timer_func(struct hrtimer *timer)
 			gpio_set_value(gpio, polarity);
 		else
 			gpio_direction_output(gpio, polarity);
-		hrtimer_start(timer, timespec_to_ktime(mi->settle_time),
-			HRTIMER_MODE_REL);
+		hrtimer_start(timer, mi->settle_time, HRTIMER_MODE_REL);
 		return HRTIMER_NORESTART;
 	}
 	if (gpio_keypad_flags & GPIOKPF_DEBOUNCE) {
 		if (kp->key_state_changed) {
-			hrtimer_start(&kp->timer,
-				timespec_to_ktime(mi->debounce_delay),
+			hrtimer_start(&kp->timer, mi->debounce_delay,
 				      HRTIMER_MODE_REL);
 			return HRTIMER_NORESTART;
 		}
@@ -201,11 +185,9 @@ static enum hrtimer_restart gpio_keypad_timer_func(struct hrtimer *timer)
 		for (out = 0; out < mi->noutputs; out++)
 			for (in = 0; in < mi->ninputs; in++, key_index++)
 				report_key(kp, key_index, out, in);
-		report_sync(kp);
 	}
 	if (!kp->use_irq || kp->some_keys_pressed) {
-		hrtimer_start(timer, timespec_to_ktime(mi->poll_time),
-			HRTIMER_MODE_REL);
+		hrtimer_start(timer, mi->poll_time, HRTIMER_MODE_REL);
 		return HRTIMER_NORESTART;
 	}
 
@@ -229,15 +211,11 @@ static irqreturn_t gpio_keypad_irq_handler(int irq_in, void *dev_id)
 	struct gpio_event_matrix_info *mi = kp->keypad_info;
 	unsigned gpio_keypad_flags = mi->flags;
 
-	if (!kp->use_irq) {
-		/* ignore interrupt while registering the handler */
-		kp->disabled_irq = 1;
-		disable_irq_nosync(irq_in);
+	if (!kp->use_irq) /* ignore interrupt while registering the handler */
 		return IRQ_HANDLED;
-	}
 
 	for (i = 0; i < mi->ninputs; i++)
-		disable_irq_nosync(gpio_to_irq(mi->input_gpios[i]));
+		disable_irq(gpio_to_irq(mi->input_gpios[i]));
 	for (i = 0; i < mi->noutputs; i++) {
 		if (gpio_keypad_flags & GPIOKPF_DRIVE_INACTIVE)
 			gpio_set_value(mi->output_gpios[i],
@@ -284,16 +262,12 @@ static int gpio_keypad_request_irqs(struct gpio_kp *kp)
 				"irq %d\n", mi->input_gpios[i], irq);
 			goto err_request_irq_failed;
 		}
-		err = enable_irq_wake(irq);
+		err = set_irq_wake(irq, 1);
 		if (err) {
 			pr_err("gpiomatrix: set_irq_wake failed for input %d, "
 				"irq %d\n", mi->input_gpios[i], irq);
 		}
 		disable_irq(irq);
-		if (kp->disabled_irq) {
-			kp->disabled_irq = 0;
-			enable_irq(irq);
-		}
 	}
 	return 0;
 
@@ -306,7 +280,7 @@ err_gpio_get_irq_num_failed:
 	return err;
 }
 
-int gpio_event_matrix_func(struct gpio_event_input_devs *input_devs,
+int gpio_event_matrix_func(struct input_dev *input_dev,
 	struct gpio_event_info *info, void **data, int func)
 {
 	int i;
@@ -338,36 +312,27 @@ int gpio_event_matrix_func(struct gpio_event_input_devs *input_devs,
 			pr_err("gpiomatrix: Failed to allocate private data\n");
 			goto err_kp_alloc_failed;
 		}
-		kp->input_devs = input_devs;
+		kp->input_dev = input_dev;
 		kp->keypad_info = mi;
+		set_bit(EV_KEY, input_dev->evbit);
 		for (i = 0; i < key_count; i++) {
-			unsigned short keyentry = mi->keymap[i];
-			unsigned short keycode = keyentry & MATRIX_KEY_MASK;
-			unsigned short dev = keyentry >> MATRIX_CODE_BITS;
-			if (dev >= input_devs->count) {
-				pr_err("gpiomatrix: bad device index %d >= "
-					"%d for key code %d\n",
-					dev, input_devs->count, keycode);
-				err = -EINVAL;
-				goto err_bad_keymap;
-			}
-			if (keycode && keycode <= KEY_MAX)
-				input_set_capability(input_devs->dev[dev],
-							EV_KEY, keycode);
+			if (mi->keymap[i])
+				set_bit(mi->keymap[i] & KEY_MAX,
+					input_dev->keybit);
 		}
 
 		for (i = 0; i < mi->noutputs; i++) {
+			if (gpio_cansleep(mi->output_gpios[i])) {
+				pr_err("gpiomatrix: unsupported output gpio %d,"
+					" can sleep\n", mi->output_gpios[i]);
+				err = -EINVAL;
+				goto err_request_output_gpio_failed;
+			}
 			err = gpio_request(mi->output_gpios[i], "gpio_kp_out");
 			if (err) {
 				pr_err("gpiomatrix: gpio_request failed for "
 					"output %d\n", mi->output_gpios[i]);
 				goto err_request_output_gpio_failed;
-			}
-			if (gpio_cansleep(mi->output_gpios[i])) {
-				pr_err("gpiomatrix: unsupported output gpio %d,"
-					" can sleep\n", mi->output_gpios[i]);
-				err = -EINVAL;
-				goto err_output_gpio_configure_failed;
 			}
 			if (mi->flags & GPIOKPF_DRIVE_INACTIVE)
 				err = gpio_direction_output(mi->output_gpios[i],
@@ -403,9 +368,8 @@ int gpio_event_matrix_func(struct gpio_event_input_devs *input_devs,
 		err = gpio_keypad_request_irqs(kp);
 		kp->use_irq = err == 0;
 
-		pr_info("GPIO Matrix Keypad Driver: Start keypad matrix for "
-			"%s%s in %s mode\n", input_devs->dev[0]->name,
-			(input_devs->count > 1) ? "..." : "",
+		pr_info("GPIO Matrix Keypad Driver: Start keypad matrix for %s "
+			"in %s mode\n", input_dev->name,
 			kp->use_irq ? "interrupt" : "polling");
 
 		if (kp->use_irq)
@@ -436,7 +400,6 @@ err_output_gpio_configure_failed:
 err_request_output_gpio_failed:
 		;
 	}
-err_bad_keymap:
 	kfree(kp);
 err_kp_alloc_failed:
 err_invalid_platform_data:
