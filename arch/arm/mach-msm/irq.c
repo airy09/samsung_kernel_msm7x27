@@ -22,14 +22,10 @@
 #include <linux/irq.h>
 #include <linux/io.h>
 
-#include <asm/cacheflush.h>
-
 #include <mach/hardware.h>
 
 #include <mach/msm_iomap.h>
-#include <mach/fiq.h>
 
-#include "sirc.h"
 #include "smd_private.h"
 
 enum {
@@ -57,16 +53,9 @@ module_param_named(debug_mask, msm_irq_debug_mask, int, S_IRUGO | S_IWUSR | S_IW
 #define VIC_INT_POLARITY0   VIC_REG(0x0050)  /* 1: NEG, 0: POS */
 #define VIC_INT_POLARITY1   VIC_REG(0x0054)  /* 1: NEG, 0: POS */
 #define VIC_NO_PEND_VAL     VIC_REG(0x0060)
-
-#if defined(CONFIG_ARCH_MSM_SCORPION)
-#define VIC_NO_PEND_VAL_FIQ VIC_REG(0x0064)
-#define VIC_INT_MASTEREN    VIC_REG(0x0068)  /* 1: IRQ, 2: FIQ     */
-#define VIC_CONFIG          VIC_REG(0x006C)  /* 1: USE SC VIC */
-#else
 #define VIC_INT_MASTEREN    VIC_REG(0x0064)  /* 1: IRQ, 2: FIQ     */
-#define VIC_CONFIG          VIC_REG(0x0068)  /* 1: USE ARM1136 VIC */
 #define VIC_PROTECTION      VIC_REG(0x006C)  /* 1: ENABLE          */
-#endif
+#define VIC_CONFIG          VIC_REG(0x0068)  /* 1: USE ARM1136 VIC */
 #define VIC_IRQ_STATUS0     VIC_REG(0x0080)
 #define VIC_IRQ_STATUS1     VIC_REG(0x0084)
 #define VIC_FIQ_STATUS0     VIC_REG(0x0090)
@@ -80,22 +69,9 @@ module_param_named(debug_mask, msm_irq_debug_mask, int, S_IRUGO | S_IWUSR | S_IW
 #define VIC_IRQ_VEC_RD      VIC_REG(0x00D0)  /* pending int # */
 #define VIC_IRQ_VEC_PEND_RD VIC_REG(0x00D4)  /* pending vector addr */
 #define VIC_IRQ_VEC_WR      VIC_REG(0x00D8)
-
-#if defined(CONFIG_ARCH_MSM_SCORPION)
-#define VIC_FIQ_VEC_RD      VIC_REG(0x00DC)
-#define VIC_FIQ_VEC_PEND_RD VIC_REG(0x00E0)
-#define VIC_FIQ_VEC_WR      VIC_REG(0x00E4)
-#define VIC_IRQ_IN_SERVICE  VIC_REG(0x00E8)
-#define VIC_IRQ_IN_STACK    VIC_REG(0x00EC)
-#define VIC_FIQ_IN_SERVICE  VIC_REG(0x00F0)
-#define VIC_FIQ_IN_STACK    VIC_REG(0x00F4)
-#define VIC_TEST_BUS_SEL    VIC_REG(0x00F8)
-#define VIC_IRQ_CTRL_CONFIG VIC_REG(0x00FC)
-#else
 #define VIC_IRQ_IN_SERVICE  VIC_REG(0x00E0)
 #define VIC_IRQ_IN_STACK    VIC_REG(0x00E4)
 #define VIC_TEST_BUS_SEL    VIC_REG(0x00E8)
-#endif
 
 #define VIC_VECTPRIORITY(n) VIC_REG(0x0200+((n) * 4))
 #define VIC_VECTADDR(n)     VIC_REG(0x0400+((n) * 4))
@@ -105,27 +81,17 @@ static struct {
 	uint32_t int_en[2];
 	uint32_t int_type;
 	uint32_t int_polarity;
-	uint32_t int_select;
 } msm_irq_shadow_reg[2];
 static uint32_t msm_irq_idle_disable[2];
 
-#ifndef CONFIG_ARCH_MSM_SCORPION
-#define INT_INFO_SMSM_ID SMEM_SMSM_INT_INFO
-struct smsm_interrupt_info *smsm_int_info;
-#else
-#define INT_INFO_SMSM_ID SMEM_APPS_DEM_SLAVE_DATA
-struct msm_dem_slave_data *smsm_int_info;
-#endif
-
-
 #define SMSM_FAKE_IRQ (0xff)
-static uint8_t msm_irq_to_smsm[NR_MSM_IRQS + NR_SIRC_IRQS] = {
+static uint8_t msm_irq_to_smsm[NR_MSM_IRQS] = {
 	[INT_MDDI_EXT] = 1,
 	[INT_MDDI_PRI] = 2,
 	[INT_MDDI_CLIENT] = 3,
 	[INT_USB_OTG] = 4,
 
-	/* [INT_PWB_I2C] = 5 -- not usable */
+	[INT_PWB_I2C] = 5,
 	[INT_SDC1_0] = 6,
 	[INT_SDC1_1] = 7,
 	[INT_SDC2_0] = 8,
@@ -168,11 +134,6 @@ static uint8_t msm_irq_to_smsm[NR_MSM_IRQS + NR_SIRC_IRQS] = {
 	[INT_A9_M2A_5] = SMSM_FAKE_IRQ,
 	[INT_GP_TIMER_EXP] = SMSM_FAKE_IRQ,
 	[INT_DEBUG_TIMER_EXP] = SMSM_FAKE_IRQ,
-	[INT_ADSP_A11] = SMSM_FAKE_IRQ,
-#ifdef CONFIG_ARCH_MSM_SCORPION
-	[INT_SIRC_0] = SMSM_FAKE_IRQ,
-	[INT_SIRC_1] = SMSM_FAKE_IRQ,
-#endif
 };
 
 static void msm_irq_ack(unsigned int irq)
@@ -284,8 +245,7 @@ int msm_irq_idle_sleep_allowed(void)
 	if (msm_irq_debug_mask & IRQ_DEBUG_SLEEP_REQUEST)
 		printk(KERN_INFO "msm_irq_idle_sleep_allowed: disable %x %x\n",
 		msm_irq_idle_disable[0], msm_irq_idle_disable[1]);
-	return !(msm_irq_idle_disable[0] || msm_irq_idle_disable[1] ||
-		 !smsm_int_info);
+	return !(msm_irq_idle_disable[0] || msm_irq_idle_disable[1]);
 }
 
 /* If arm9_wake is set: pass control to the other core.
@@ -293,10 +253,12 @@ int msm_irq_idle_sleep_allowed(void)
  */
 void msm_irq_enter_sleep1(bool arm9_wake, int from_idle)
 {
-	if (!arm9_wake || !smsm_int_info)
-		return;
-	smsm_int_info->interrupt_mask = msm_irq_smsm_wake_enable[!from_idle];
-	smsm_int_info->pending_interrupts = 0;
+	struct smsm_interrupt_info int_info;
+	if (arm9_wake) {
+		int_info.aArm_en_mask = msm_irq_smsm_wake_enable[!from_idle];
+		int_info.aArm_interrupts_pending = 0;
+		smsm_set_interrupt_info(&int_info);
+	}
 }
 
 int msm_irq_enter_sleep2(bool arm9_wake, int from_idle)
@@ -342,7 +304,6 @@ int msm_irq_enter_sleep2(bool arm9_wake, int from_idle)
 
 	if (arm9_wake) {
 		msm_irq_set_type(INT_A9_M2A_6, IRQF_TRIGGER_RISING);
-		msm_irq_ack(INT_A9_M2A_6);
 		writel(1U << INT_A9_M2A_6, VIC_INT_ENSET0);
 	} else {
 		writel(msm_irq_shadow_reg[0].int_en[1], VIC_INT_ENSET0);
@@ -353,26 +314,26 @@ int msm_irq_enter_sleep2(bool arm9_wake, int from_idle)
 
 void msm_irq_exit_sleep1(void)
 {
+	struct smsm_interrupt_info *int_info;
 	int i;
 
 	msm_irq_ack(INT_A9_M2A_6);
-	msm_irq_ack(INT_PWB_I2C);
 	for (i = 0; i < 2; i++) {
 		writel(msm_irq_shadow_reg[i].int_type, VIC_INT_TYPE0 + i * 4);
 		writel(msm_irq_shadow_reg[i].int_polarity, VIC_INT_POLARITY0 + i * 4);
 		writel(msm_irq_shadow_reg[i].int_en[0], VIC_INT_EN0 + i * 4);
-		writel(msm_irq_shadow_reg[i].int_select, VIC_INT_SELECT0 + i * 4);
 	}
-	writel(3, VIC_INT_MASTEREN);
-	if (!smsm_int_info) {
+	writel(1, VIC_INT_MASTEREN);
+	int_info = smem_alloc(SMEM_SMSM_INT_INFO, sizeof(*int_info));
+	if (int_info == NULL) {
 		printk(KERN_ERR "msm_irq_exit_sleep <SM NO INT_INFO>\n");
 		return;
 	}
 	if (msm_irq_debug_mask & IRQ_DEBUG_SLEEP)
 		printk(KERN_INFO "msm_irq_exit_sleep1 %x %x %x now %x %x\n",
-		       smsm_int_info->interrupt_mask,
-		       smsm_int_info->pending_interrupts,
-		       smsm_int_info->wakeup_reason,
+		       int_info->aArm_en_mask,
+		       int_info->aArm_interrupts_pending,
+		       int_info->aArm_wakeup_reason,
 		       readl(VIC_IRQ_STATUS0), readl(VIC_IRQ_STATUS1));
 }
 
@@ -380,18 +341,19 @@ void msm_irq_exit_sleep2(void)
 {
 	int i;
 	uint32_t pending;
-
-	if (!smsm_int_info) {
+	struct smsm_interrupt_info *int_info;
+	int_info = smem_alloc(SMEM_SMSM_INT_INFO, sizeof(*int_info));
+	if (int_info == NULL) {
 		printk(KERN_ERR "msm_irq_exit_sleep <SM NO INT_INFO>\n");
 		return;
 	}
 	if (msm_irq_debug_mask & IRQ_DEBUG_SLEEP)
 		printk(KERN_INFO "msm_irq_exit_sleep2 %x %x %x now %x %x\n",
-		       smsm_int_info->interrupt_mask,
-		       smsm_int_info->pending_interrupts,
-		       smsm_int_info->wakeup_reason,
+		       int_info->aArm_en_mask,
+		       int_info->aArm_interrupts_pending,
+		       int_info->aArm_wakeup_reason,
 		       readl(VIC_IRQ_STATUS0), readl(VIC_IRQ_STATUS1));
-	pending = smsm_int_info->pending_interrupts;
+	pending = int_info->aArm_interrupts_pending;
 	for (i = 0; pending && i < ARRAY_SIZE(msm_irq_to_smsm); i++) {
 		unsigned reg_offset = (i & 32) ? 4 : 0;
 		uint32_t reg_mask = 1UL << (i & 31);
@@ -423,17 +385,18 @@ void msm_irq_exit_sleep2(void)
 
 void msm_irq_exit_sleep3(void)
 {
-	if (!smsm_int_info) {
+	struct smsm_interrupt_info *int_info;
+	int_info = smem_alloc(SMEM_SMSM_INT_INFO, sizeof(*int_info));
+	if (int_info == NULL) {
 		printk(KERN_ERR "msm_irq_exit_sleep <SM NO INT_INFO>\n");
 		return;
 	}
 	if (msm_irq_debug_mask & IRQ_DEBUG_SLEEP)
 		printk(KERN_INFO "msm_irq_exit_sleep3 %x %x %x now %x %x "
-		       "state %x\n", smsm_int_info->interrupt_mask,
-		       smsm_int_info->pending_interrupts,
-		       smsm_int_info->wakeup_reason, readl(VIC_IRQ_STATUS0),
-		       readl(VIC_IRQ_STATUS1),
-		       smsm_get_state(SMSM_STATE_MODEM));
+		       "state %x\n", int_info->aArm_en_mask,
+		       int_info->aArm_interrupts_pending,
+		       int_info->aArm_wakeup_reason, readl(VIC_IRQ_STATUS0),
+		       readl(VIC_IRQ_STATUS1), smsm_get_state());
 }
 
 static struct irq_chip msm_irq_chip = {
@@ -470,139 +433,11 @@ void __init msm_init_irq(void)
 	writel(0, VIC_CONFIG);
 
 	/* enable interrupt controller */
-	writel(3, VIC_INT_MASTEREN);
+	writel(1, VIC_INT_MASTEREN);
 
 	for (n = 0; n < NR_MSM_IRQS; n++) {
 		set_irq_chip(n, &msm_irq_chip);
 		set_irq_handler(n, handle_level_irq);
 		set_irq_flags(n, IRQF_VALID);
 	}
-
-	msm_init_sirc();
 }
-
-static int __init msm_init_irq_late(void)
-{
-	smsm_int_info = smem_alloc(INT_INFO_SMSM_ID, sizeof(*smsm_int_info));
-	if (!smsm_int_info)
-		pr_err("set_wakeup_mask NO INT_INFO (%d)\n", INT_INFO_SMSM_ID);
-	return 0;
-}
-late_initcall(msm_init_irq_late);
-
-#if defined(CONFIG_MSM_FIQ_SUPPORT)
-void msm_trigger_irq(int irq)
-{
-	void __iomem *reg = VIC_SOFTINT0 + ((irq & 32) ? 4 : 0);
-	uint32_t mask = 1UL << (irq & 31);
-	writel(mask, reg);
-}
-
-void msm_fiq_enable(int irq)
-{
-	unsigned long flags;
-	local_irq_save(flags);
-	irq_desc[irq].chip->unmask(irq);
-	local_irq_restore(flags);
-}
-
-void msm_fiq_disable(int irq)
-{
-	unsigned long flags;
-	local_irq_save(flags);
-	irq_desc[irq].chip->mask(irq);
-	local_irq_restore(flags);
-}
-
-static void _msm_fiq_select(int irq)
-{
-	void __iomem *reg = VIC_INT_SELECT0 + ((irq & 32) ? 4 : 0);
-	unsigned index = (irq >> 5) & 1;
-	uint32_t mask = 1UL << (irq & 31);
-	unsigned long flags;
-
-	local_irq_save(flags);
-	msm_irq_shadow_reg[index].int_select |= mask;
-	writel(msm_irq_shadow_reg[index].int_select, reg);
-	local_irq_restore(flags);
-}
-
-static void _msm_fiq_unselect(int irq)
-{
-	void __iomem *reg = VIC_INT_SELECT0 + ((irq & 32) ? 4 : 0);
-	unsigned index = (irq >> 5) & 1;
-	uint32_t mask = 1UL << (irq & 31);
-	unsigned long flags;
-
-	local_irq_save(flags);
-	msm_irq_shadow_reg[index].int_select &= (!mask);
-	writel(msm_irq_shadow_reg[index].int_select, reg);
-	local_irq_restore(flags);
-}
-
-void msm_fiq_select(int irq)
-{
-	if (irq < FIRST_SIRC_IRQ)
-		_msm_fiq_select(irq);
-	else if (irq < FIRST_GPIO_IRQ)
-		sirc_fiq_select(irq, true);
-	else
-		pr_err("unsupported fiq %d", irq);
-}
-
-void msm_fiq_unselect(int irq)
-{
-	if (irq < FIRST_SIRC_IRQ)
-		_msm_fiq_unselect(irq);
-	else if (irq < FIRST_GPIO_IRQ)
-		sirc_fiq_select(irq, false);
-	else
-		pr_err("unsupported fiq %d", irq);
-}
-
-/* set_fiq_handler originally from arch/arm/kernel/fiq.c */
-static void set_fiq_handler(void *start, unsigned int length)
-{
-	memcpy((void *)0xffff001c, start, length);
-	flush_icache_range(0xffff001c, 0xffff001c + length);
-	if (!vectors_high())
-		flush_icache_range(0x1c, 0x1c + length);
-}
-
-extern unsigned char fiq_glue, fiq_glue_end;
-
-static void (*fiq_func)(void *data, void *regs, void *svc_sp);
-static void *fiq_data;
-static void *fiq_stack;
-
-void fiq_glue_setup(void *func, void *data, void *sp);
-
-int msm_fiq_set_handler(void (*func)(void *data, void *regs, void *svc_sp),
-			void *data)
-{
-	unsigned long flags;
-	int ret = -ENOMEM;
-
-	if (!fiq_stack)
-		fiq_stack = kzalloc(THREAD_SIZE, GFP_KERNEL);
-	if (!fiq_stack)
-		return -ENOMEM;
-
-	local_irq_save(flags);
-	if (fiq_func == 0) {
-		fiq_func = func;
-		fiq_data = data;
-		fiq_glue_setup(func, data, fiq_stack + THREAD_START_SP);
-		set_fiq_handler(&fiq_glue, (&fiq_glue_end - &fiq_glue));
-		ret = 0;
-	}
-	local_irq_restore(flags);
-	return ret;
-}
-
-void msm_fiq_exit_sleep(void)
-{
-	if (fiq_stack)
-		fiq_glue_setup(fiq_func, fiq_data, fiq_stack + THREAD_START_SP);
-}
-#endif
