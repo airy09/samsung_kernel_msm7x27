@@ -16,7 +16,9 @@
 
 #include <mach/msm_fb.h>
 #include <mach/vreg.h>
-#include <mach/htc_pwrsink.h>
+#ifdef CONFIG_TROUT_PWRSINK
+#include <mach/trout_pwrsink.h>
+#endif
 
 #include "board-trout.h"
 #include "proc_comm.h"
@@ -33,7 +35,9 @@ static DEFINE_MUTEX(trout_backlight_lock);
 
 static void trout_set_backlight_level(uint8_t level)
 {
+#ifdef CONFIG_TROUT_PWRSINK
 	unsigned percent = ((int)level * 100) / 255;
+#endif
 
 	if (trout_new_backlight) {
 		unsigned long flags;
@@ -83,7 +87,9 @@ static void trout_set_backlight_level(uint8_t level)
 			clk_disable(gp_clk);
 		}
 	}
-	htc_pwrsink_set(PWRSINK_BACKLIGHT, percent);
+#ifdef CONFIG_TROUT_PWRSINK
+	trout_pwrsink_set(PWRSINK_BACKLIGHT, percent);
+#endif
 }
 
 #define MDDI_CLIENT_CORE_BASE  0x108000
@@ -356,7 +362,7 @@ static struct mddi_table mddi_tpo_deinit_table[] = {
 #define GPIOSEL_VWAKEINT (1U << 0)
 #define INTMASK_VWAKEOUT (1U << 0)
 
-static void trout_process_mddi_table(struct msm_mddi_client_data *client_data,
+static void trout_process_mddi_table(struct msm_mddi_client_data *cdata,
 				     struct mddi_table *table, size_t count)
 {
 	int i;
@@ -369,14 +375,14 @@ static void trout_process_mddi_table(struct msm_mddi_client_data *client_data,
 		else if (reg == 1)
 			msleep(value);
 		else
-			client_data->remote_write(client_data, value, reg);
+			cdata->remote_write(cdata, value, reg);
 	}
 }
 
 static struct vreg *vreg_mddi_1v5;
 static struct vreg *vreg_lcm_2v85;
 
-static void trout_mddi_power_client(struct msm_mddi_client_data *client_data,
+static void trout_mddi_power_client(struct msm_mddi_client_data *cdata,
 				    int on)
 {
     unsigned id, on_off;
@@ -412,17 +418,15 @@ static void trout_mddi_power_client(struct msm_mddi_client_data *client_data,
 	}
 }
 
-static int trout_mddi_toshiba_client_init(
-	struct msm_mddi_bridge_platform_data *bridge_data,
-	struct msm_mddi_client_data *client_data)
+static int trout_mddi_toshiba_client_init(struct msm_mddi_client_data *cdata)
 {
 	int panel_id;
 
-	client_data->auto_hibernate(client_data, 0);
-	trout_process_mddi_table(client_data, mddi_toshiba_init_table,
+	cdata->auto_hibernate(cdata, 0);
+	trout_process_mddi_table(cdata, mddi_toshiba_init_table,
 				 ARRAY_SIZE(mddi_toshiba_init_table));
-	client_data->auto_hibernate(client_data, 1);
-	panel_id = (client_data->remote_read(client_data, GPIODATA) >> 4) & 3;
+	cdata->auto_hibernate(cdata, 1);
+	panel_id = (cdata->remote_read(cdata, GPIODATA) >> 4) & 3;
 	if (panel_id > 1) {
 		printk("unknown panel id at mddi_enable\n");
 		return -1;
@@ -430,35 +434,34 @@ static int trout_mddi_toshiba_client_init(
 	return 0;
 }
 
-static int trout_mddi_toshiba_client_uninit(
-	struct msm_mddi_bridge_platform_data *bridge_data,
-	struct msm_mddi_client_data *client_data)
+static int trout_mddi_toshiba_client_uninit(struct msm_mddi_client_data *cdata)
 {
 	return 0;
 }
 
-static int trout_mddi_panel_unblank(
-	struct msm_mddi_bridge_platform_data *bridge_data,
-	struct msm_mddi_client_data *client_data)
+static int trout_mddi_panel_unblank(struct msm_panel_data *panel_data)
 {
+	struct msm_mddi_panel_info *panel = container_of(panel_data,
+		struct msm_mddi_panel_info, panel_data);
+	struct msm_mddi_client_data *mddi_client = panel->client_data;
 
 	int panel_id, ret = 0;
 	
 	trout_set_backlight_level(0);
-	client_data->auto_hibernate(client_data, 0);
-	trout_process_mddi_table(client_data, mddi_toshiba_panel_init_table,
+	mddi_client->auto_hibernate(mddi_client, 0);
+	trout_process_mddi_table(mddi_client, mddi_toshiba_panel_init_table,
 		ARRAY_SIZE(mddi_toshiba_panel_init_table));
-	panel_id = (client_data->remote_read(client_data, GPIODATA) >> 4) & 3;
+	panel_id = (mddi_client->remote_read(mddi_client, GPIODATA) >> 4) & 3;
 	switch(panel_id) {
 	 case 0:
 		printk("init sharp panel\n");
-		trout_process_mddi_table(client_data,
+		trout_process_mddi_table(mddi_client,
 					 mddi_sharp_init_table,
 					 ARRAY_SIZE(mddi_sharp_init_table));
 		break;
 	case 1:
 		printk("init tpo panel\n");
-		trout_process_mddi_table(client_data,
+		trout_process_mddi_table(mddi_client,
 					 mddi_tpo_init_table,
 					 ARRAY_SIZE(mddi_tpo_init_table));
 		break;
@@ -470,31 +473,35 @@ static int trout_mddi_panel_unblank(
 	trout_set_backlight_level(trout_backlight_brightness);
 	trout_backlight_off = 0;
 	mutex_unlock(&trout_backlight_lock);
-	client_data->auto_hibernate(client_data, 1);
-	client_data->remote_write(client_data, GPIOSEL_VWAKEINT, GPIOSEL);
-	client_data->remote_write(client_data, INTMASK_VWAKEOUT, INTMASK);
+	mddi_client->auto_hibernate(mddi_client, 1);
+	// reenable vsync
+	mddi_client->remote_write(mddi_client, GPIOSEL_VWAKEINT,
+				  GPIOSEL);
+	mddi_client->remote_write(mddi_client, INTMASK_VWAKEOUT,
+				  INTMASK);
 	return ret;
 
 }
 
-static int trout_mddi_panel_blank(
-	struct msm_mddi_bridge_platform_data *bridge_data,
-	struct msm_mddi_client_data *client_data)
+static int trout_mddi_panel_blank(struct msm_panel_data *panel_data)
 {
+	struct msm_mddi_panel_info *panel = container_of(panel_data,
+		struct msm_mddi_panel_info, panel_data);
+	struct msm_mddi_client_data *mddi_client = panel->client_data;
 	int panel_id, ret = 0;
 
-	panel_id = (client_data->remote_read(client_data, GPIODATA) >> 4) & 3;
-	client_data->auto_hibernate(client_data, 0);
+	panel_id = (mddi_client->remote_read(mddi_client, GPIODATA) >> 4) & 3;
+	mddi_client->auto_hibernate(mddi_client, 0);
 	switch(panel_id) {
 	case 0:
 		printk("deinit sharp panel\n");
-		trout_process_mddi_table(client_data,
+		trout_process_mddi_table(mddi_client,
 					 mddi_sharp_deinit_table,
 					 ARRAY_SIZE(mddi_sharp_deinit_table));
 		break;
 	case 1:
 		printk("deinit tpo panel\n");
-		trout_process_mddi_table(client_data,
+		trout_process_mddi_table(mddi_client,
 					 mddi_tpo_deinit_table,
 					 ARRAY_SIZE(mddi_tpo_deinit_table));
 		break;
@@ -502,13 +509,14 @@ static int trout_mddi_panel_blank(
 		printk("unknown panel_id: %d\n", panel_id);
 		ret = -1;
 	};
-	client_data->auto_hibernate(client_data, 1);
+	mddi_client->auto_hibernate(mddi_client,1);
 	mutex_lock(&trout_backlight_lock);
 	trout_set_backlight_level(0);
 	trout_backlight_off = 1;
 	mutex_unlock(&trout_backlight_lock);
-	client_data->remote_write(client_data, 0, SYSCLKENA);
-	client_data->remote_write(client_data, 1, DPSUS);
+	mddi_client->remote_write(mddi_client, 0, SYSCLKENA);
+	mddi_client->remote_write(mddi_client, 1, DPSUS);
+
 	return ret;
 }
 
@@ -556,7 +564,7 @@ static struct resource resources_msm_fb[] = {
 	},
 };
 
-struct msm_mddi_bridge_platform_data toshiba_client_data = {
+struct msm_mddi_toshiba_client_data toshiba_client_data = {
 	.init = trout_mddi_toshiba_client_init,
 	.uninit = trout_mddi_toshiba_client_uninit,
 	.blank = trout_mddi_panel_blank,
@@ -564,8 +572,6 @@ struct msm_mddi_bridge_platform_data toshiba_client_data = {
 	.fb_data = {
 		.xres = 320,
 		.yres = 480,
-		.width = 45,
-		.height = 67,
 		.output_format = 0,
 	},
 };
@@ -579,10 +585,8 @@ struct msm_mddi_platform_data mddi_pdata = {
 		{
 			.product_id = (0xd263 << 16 | 0),
 			.name = "mddi_c_d263_0000",
-			//.name = "mddi_c_dummy",
 			.id = 0,
 			.client_data = &toshiba_client_data,
-			//.client_data = &toshiba_client_data.fb_data,
 			.clk_rate = 0,
 		},
 	},
@@ -607,13 +611,13 @@ int __init trout_init_panel(void)
 
 	trout_new_backlight = system_rev >= 5;
 	if (trout_new_backlight) {
-		uint32_t config = PCOM_GPIO_CFG(27, 0, GPIO_CFG_OUTPUT,
-						GPIO_CFG_NO_PULL, GPIO_CFG_8MA);
+		uint32_t config = PCOM_GPIO_CFG(27, 0, GPIO_OUTPUT,
+						GPIO_NO_PULL, GPIO_8MA);
 		msm_proc_comm(PCOM_RPC_GPIO_TLMM_CONFIG_EX, &config, 0);
 	}
 	else {
-		uint32_t config = PCOM_GPIO_CFG(27, 1, GPIO_CFG_OUTPUT,
-						GPIO_CFG_NO_PULL, GPIO_CFG_8MA);
+		uint32_t config = PCOM_GPIO_CFG(27, 1, GPIO_OUTPUT,
+						GPIO_NO_PULL, GPIO_8MA);
 		msm_proc_comm(PCOM_RPC_GPIO_TLMM_CONFIG_EX, &config, 0);
 
 		gp_clk = clk_get(NULL, "gp_clk");
