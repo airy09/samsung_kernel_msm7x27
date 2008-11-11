@@ -15,7 +15,6 @@
 #include <asm/io.h>
 
 #include <mach/vreg.h>
-#include <mach/htc_pwrsink.h>
 
 #include <asm/mach/mmc.h>
 
@@ -43,21 +42,21 @@ static void config_gpio_table(uint32_t *table, int len)
 /* ---- SDCARD ---- */
 
 static uint32_t sdcard_on_gpio_table[] = {
-	PCOM_GPIO_CFG(62, 2, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA), /* CLK */
-	PCOM_GPIO_CFG(63, 2, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_8MA), /* CMD */
-	PCOM_GPIO_CFG(64, 2, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_8MA), /* DAT3 */
-	PCOM_GPIO_CFG(65, 2, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_8MA), /* DAT2 */
-	PCOM_GPIO_CFG(66, 2, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_4MA), /* DAT1 */
-	PCOM_GPIO_CFG(67, 2, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_4MA), /* DAT0 */
+	PCOM_GPIO_CFG(62, 2, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_8MA), /* CLK */
+	PCOM_GPIO_CFG(63, 2, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_8MA), /* CMD */
+	PCOM_GPIO_CFG(64, 2, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_8MA), /* DAT3 */
+	PCOM_GPIO_CFG(65, 2, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_8MA), /* DAT2 */
+	PCOM_GPIO_CFG(66, 2, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_4MA), /* DAT1 */
+	PCOM_GPIO_CFG(67, 2, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_4MA), /* DAT0 */
 };
 
 static uint32_t sdcard_off_gpio_table[] = {
-	PCOM_GPIO_CFG(62, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* CLK */
-	PCOM_GPIO_CFG(63, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* CMD */
-	PCOM_GPIO_CFG(64, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT3 */
-	PCOM_GPIO_CFG(65, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT2 */
-	PCOM_GPIO_CFG(66, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT1 */
-	PCOM_GPIO_CFG(67, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT0 */
+	PCOM_GPIO_CFG(62, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* CLK */
+	PCOM_GPIO_CFG(63, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* CMD */
+	PCOM_GPIO_CFG(64, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT3 */
+	PCOM_GPIO_CFG(65, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT2 */
+	PCOM_GPIO_CFG(66, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT1 */
+	PCOM_GPIO_CFG(67, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT0 */
 };
 
 static uint opt_disable_sdcard;
@@ -173,23 +172,23 @@ static struct mmc_platform_data trout_sdslot_data = {
 /* ---- WIFI ---- */
 
 static uint32_t wifi_on_gpio_table[] = {
-	PCOM_GPIO_CFG(51, 1, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_4MA), /* DAT3 */
-	PCOM_GPIO_CFG(52, 1, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_4MA), /* DAT2 */
-	PCOM_GPIO_CFG(53, 1, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_4MA), /* DAT1 */
-	PCOM_GPIO_CFG(54, 1, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_4MA), /* DAT0 */
-	PCOM_GPIO_CFG(55, 1, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_8MA), /* CMD */
-	PCOM_GPIO_CFG(56, 1, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA), /* CLK */
-	PCOM_GPIO_CFG(29, 0, GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA),  /* WLAN IRQ */
+	PCOM_GPIO_CFG(51, 1, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_4MA), /* DAT3 */
+	PCOM_GPIO_CFG(52, 1, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_4MA), /* DAT2 */
+	PCOM_GPIO_CFG(53, 1, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_4MA), /* DAT1 */
+	PCOM_GPIO_CFG(54, 1, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_4MA), /* DAT0 */
+	PCOM_GPIO_CFG(55, 1, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_8MA), /* CMD */
+	PCOM_GPIO_CFG(56, 1, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_8MA), /* CLK */
+	PCOM_GPIO_CFG(29, 0, GPIO_INPUT, GPIO_NO_PULL, GPIO_4MA),  /* WLAN IRQ */
 };
 
 static uint32_t wifi_off_gpio_table[] = {
-	PCOM_GPIO_CFG(51, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT3 */
-	PCOM_GPIO_CFG(52, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT2 */
-	PCOM_GPIO_CFG(53, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT1 */
-	PCOM_GPIO_CFG(54, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT0 */
-	PCOM_GPIO_CFG(55, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* CMD */
-	PCOM_GPIO_CFG(56, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* CLK */
-	PCOM_GPIO_CFG(29, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA),  /* WLAN IRQ */
+	PCOM_GPIO_CFG(51, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT3 */
+	PCOM_GPIO_CFG(52, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT2 */
+	PCOM_GPIO_CFG(53, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT1 */
+	PCOM_GPIO_CFG(54, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT0 */
+	PCOM_GPIO_CFG(55, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* CMD */
+	PCOM_GPIO_CFG(56, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* CLK */
+	PCOM_GPIO_CFG(29, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA),  /* WLAN IRQ */
 };
 
 static struct vreg *vreg_wifi_osc;	/* WIFI 32khz oscilator */
@@ -236,19 +235,23 @@ static unsigned int trout_wifi_status(struct device *dev)
 	return trout_wifi_cd;
 }
 
-int trout_wifi_set_carddetect(int val)
+static struct mmc_platform_data trout_wifi_data = {
+	.ocr_mask		= MMC_VDD_28_29,
+	.status			= trout_wifi_status,
+	.register_status_notify	= trout_wifi_status_register,
+	.embedded_sdio		= &trout_wifi_emb_data,
+};
+
+void trout_wifi_set_carddetect(int val)
 {
 	printk("%s: %d\n", __func__, val);
 	trout_wifi_cd = val;
-	if (wifi_status_cb)
+	if (wifi_status_cb) {
 		wifi_status_cb(val, wifi_status_cb_devid);
-	else
+	} else
 		printk(KERN_WARNING "%s: Nobody to notify\n", __func__);
-	return 0;
 }
-#ifndef CONFIG_WIFI_CONTROL_FUNC
 EXPORT_SYMBOL(trout_wifi_set_carddetect);
-#endif
 
 static int trout_wifi_power_state;
 
@@ -264,44 +267,31 @@ int trout_wifi_power(int on)
 		rc = vreg_enable(vreg_wifi_osc);
 		if (rc)
 			return rc;
-		htc_pwrsink_set(PWRSINK_WIFI, 70);
 	} else {
 		config_gpio_table(wifi_off_gpio_table,
 				  ARRAY_SIZE(wifi_off_gpio_table));
-		htc_pwrsink_set(PWRSINK_WIFI, 0);
 	}
 	gpio_set_value( TROUT_GPIO_MAC_32K_EN, on);
 	mdelay(100);
 	gpio_set_value( TROUT_GPIO_WIFI_EN, on);
 	mdelay(100);
-	if (!on)
+	if (!on) {
 		vreg_disable(vreg_wifi_osc);
+	}
 	trout_wifi_power_state = on;
 	return 0;
 }
-#ifndef CONFIG_WIFI_CONTROL_FUNC
 EXPORT_SYMBOL(trout_wifi_power);
-#endif
 
 static int trout_wifi_reset_state;
-int trout_wifi_reset(int on)
+void trout_wifi_reset(int on)
 {
 	printk("%s: %d\n", __func__, on);
 	gpio_set_value( TROUT_GPIO_WIFI_PA_RESETX, !on );
 	trout_wifi_reset_state = on;
 	mdelay(50);
-	return 0;
 }
-#ifndef CONFIG_WIFI_CONTROL_FUNC
 EXPORT_SYMBOL(trout_wifi_reset);
-#endif
-
-static struct mmc_platform_data trout_wifi_data = {
-	.ocr_mask		= MMC_VDD_28_29,
-	.status			= trout_wifi_status,
-	.register_status_notify	= trout_wifi_status_register,
-	.embedded_sdio		= &trout_wifi_emb_data,
-};
 
 int __init trout_init_mmc(unsigned int sys_rev)
 {
