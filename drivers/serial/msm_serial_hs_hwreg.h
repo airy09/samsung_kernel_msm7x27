@@ -1,6 +1,7 @@
 /* drivers/serial/msm_serial_hs_hwreg.h
  *
- * Copyright (c) 2007-2009, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2007-2008 QUALCOMM Incorporated.
+ * Copyright (c) 2008 QUALCOMM USA, INC.
  * 
  * All source code in this file is licensed under the following license
  * except where indicated.
@@ -18,40 +19,14 @@
  * along with this program; if not, you can find it at http://www.fsf.org
  */
 
-#ifndef MSM_SERIAL_HS_HWREG_H
-#define MSM_SERIAL_HS_HWREG_H
-
-#define GSBI_CONTROL_ADDR              0x0
-#define GSBI_PROTOCOL_CODE_MASK        0x30
-#define GSBI_PROTOCOL_UART             0x40
-#define GSBI_PROTOCOL_IDLE             0x0
-
-#define TCSR_ADM_1_A_CRCI_MUX_SEL      0x78
-#define TCSR_ADM_1_B_CRCI_MUX_SEL      0x7C
-#define ADM1_CRCI_GSBI6_RX_SEL         0x800
-#define ADM1_CRCI_GSBI6_TX_SEL         0x400
+#ifndef MSM_UART_HS_HWREG_H
+#define MSM_UART_HS_HWREG_H
 
 #define UARTDM_MR1_ADDR 0x0
 #define UARTDM_MR2_ADDR 0x4
 
 /* write only register */
-#define UARTDM_CSR_ADDR    0x8
-#define UARTDM_CSR_115200 0xFF
-#define UARTDM_CSR_57600  0xEE
-#define UARTDM_CSR_38400  0xDD
-#define UARTDM_CSR_28800  0xCC
-#define UARTDM_CSR_19200  0xBB
-#define UARTDM_CSR_14400  0xAA
-#define UARTDM_CSR_9600   0x99
-#define UARTDM_CSR_7200   0x88
-#define UARTDM_CSR_4800   0x77
-#define UARTDM_CSR_3600   0x66
-#define UARTDM_CSR_2400   0x55
-#define UARTDM_CSR_1200   0x44
-#define UARTDM_CSR_600    0x33
-#define UARTDM_CSR_300    0x22
-#define UARTDM_CSR_150    0x11
-#define UARTDM_CSR_75     0x00
+#define UARTDM_CSR_ADDR 0x8
 
 /* write only register */
 #define UARTDM_TF_ADDR 0x70
@@ -98,17 +73,17 @@
 #define UARTDM_RXFS_ADDR 0x50
 
 /* Register field Mask Mapping */
-#define UARTDM_SR_RX_BREAK_BMSK	        BIT(6)
-#define UARTDM_SR_PAR_FRAME_BMSK	BIT(5)
-#define UARTDM_SR_OVERRUN_BMSK		BIT(4)
-#define UARTDM_SR_TXEMT_BMSK		BIT(3)
-#define UARTDM_SR_TXRDY_BMSK		BIT(2)
-#define UARTDM_SR_RXRDY_BMSK		BIT(0)
+#define UARTDM_SR_TXEMT_BMSK 0x8
 
-#define UARTDM_CR_TX_DISABLE_BMSK	BIT(3)
-#define UARTDM_CR_RX_DISABLE_BMSK	BIT(1)
-#define UARTDM_CR_TX_EN_BMSK		BIT(2)
-#define UARTDM_CR_RX_EN_BMSK		BIT(0)
+#define UARTDM_SR_TXRDY_BMSK 0x4
+#define UARTDM_SR_RXRDY_BMSK 0x1
+#define UARTDM_SR_OVERRUN_BMSK 0x10
+#define UARTDM_SR_PAR_FRAME_BMSK 0x20
+
+#define UARTDM_CR_TX_DISABLE_BMSK 0x8
+#define UARTDM_CR_RX_DISABLE_BMSK 0x2
+#define UARTDM_CR_TX_EN_BMSK 0x4
+#define UARTDM_CR_RX_EN_BMSK 0x1
 
 /* UARTDM_CR channel_comman bit value (register field is bits 8:4) */
 #define RESET_RX		0x10
@@ -134,11 +109,8 @@
 #define UARTDM_MR1_CTS_CTL_BMSK 0x40
 #define UARTDM_MR1_RX_RDY_CTL_BMSK 0x80
 
-#define UARTDM_MR2_LOOP_MODE_BMSK        0x80
-#define UARTDM_MR2_ERROR_MODE_BMSK       0x40
-#define UARTDM_MR2_BITS_PER_CHAR_BMSK    0x30
-
-#define UARTDM_MR2_BITS_PER_CHAR_8	(0x3 << 4)
+#define UARTDM_MR2_ERROR_MODE_BMSK 0x40
+#define UARTDM_MR2_BITS_PER_CHAR_BMSK 0x30
 
 /* bits per character configuration */
 #define FIVE_BPC  (0 << 4)
@@ -162,17 +134,13 @@
 #define UARTDM_IPR_STALE_LSB_BMSK 0x1f
 
 /* These can be used for both ISR and IMR register */
-#define UARTDM_ISR_TX_READY_BMSK	BIT(7)
-#define UARTDM_ISR_CURRENT_CTS_BMSK	BIT(6)
-#define UARTDM_ISR_DELTA_CTS_BMSK	BIT(5)
-#define UARTDM_ISR_RXLEV_BMSK		BIT(4)
-#define UARTDM_ISR_RXSTALE_BMSK		BIT(3)
-#define UARTDM_ISR_RXBREAK_BMSK		BIT(2)
-#define UARTDM_ISR_RXHUNT_BMSK		BIT(1)
-#define UARTDM_ISR_TXLEV_BMSK		BIT(0)
+#define UARTDM_ISR_CURRENT_CTS_BMSK 0x40
+#define UARTDM_ISR_DELTA_CTS_BMSK 0x20
+#define UARTDM_ISR_TX_READY_BMSK 0x80
+#define UARTDM_ISR_RXSTALE_BMSK 0x8
 
 /* Field definitions for UART_DM_DMEN*/
 #define UARTDM_TX_DM_EN_BMSK 0x1
 #define UARTDM_RX_DM_EN_BMSK 0x2
 
-#endif /* MSM_SERIAL_HS_HWREG_H */
+#endif /* MSM_UART_HWREG_H */
