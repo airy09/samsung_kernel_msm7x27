@@ -20,7 +20,10 @@
 #define KEYRESET_NAME "keyreset"
 
 struct keyreset_platform_data {
+<<<<<<< HEAD
 	int (*reset_fn)(void);
+=======
+>>>>>>> 658d99a... input: Add keyreset driver.
 	int *keys_up;
 	int keys_down[]; /* 0 terminated */
 };

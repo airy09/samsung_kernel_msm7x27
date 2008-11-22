@@ -25,3 +25,8 @@ obj-$(CONFIG_INPUT_MISC)	+= misc/
 
 obj-$(CONFIG_INPUT_APMPOWER)	+= apm-power.o
 obj-$(CONFIG_INPUT_KEYRESET)	+= keyreset.o
+<<<<<<< HEAD
+=======
+
+obj-$(CONFIG_XEN_KBDDEV_FRONTEND)	+= xen-kbdfront.o
+>>>>>>> 658d99a... input: Add keyreset driver.

@@ -33,7 +33,10 @@ struct keyreset_state {
 	int key_down;
 	int key_up;
 	int restart_disabled;
+<<<<<<< HEAD
 	int (*reset_fn)(void);
+=======
+>>>>>>> 658d99a... input: Add keyreset driver.
 };
 
 int restart_requested;
@@ -88,6 +91,7 @@ static void keyreset_event(struct input_handle *handle, unsigned int type,
 		state->restart_disabled = 1;
 		if (restart_requested)
 			panic("keyboard reset failed, %d", restart_requested);
+<<<<<<< HEAD
 		if (state->reset_fn) {
 			restart_requested = state->reset_fn();
 		} else {
@@ -95,6 +99,11 @@ static void keyreset_event(struct input_handle *handle, unsigned int type,
 			schedule_work(&restart_work);
 			restart_requested = 1;
 		}
+=======
+		pr_info("keyboard reset\n");
+		schedule_work(&restart_work);
+		restart_requested = 1;
+>>>>>>> 658d99a... input: Add keyreset driver.
 	}
 done:
 	spin_unlock_irqrestore(&state->lock, flags);
@@ -192,10 +201,13 @@ static int keyreset_probe(struct platform_device *pdev)
 			__set_bit(key, state->upbit);
 		}
 	}
+<<<<<<< HEAD
 
 	if (pdata->reset_fn)
 		state->reset_fn = pdata->reset_fn;
 
+=======
+>>>>>>> 658d99a... input: Add keyreset driver.
 	state->input_handler.event = keyreset_event;
 	state->input_handler.connect = keyreset_connect;
 	state->input_handler.disconnect = keyreset_disconnect;
