@@ -18,7 +18,33 @@
 #define	__LINUX_USB_ANDROID_H
 
 struct android_usb_platform_data {
-	int (*update_pid_and_serial_num)(uint32_t, const char *);
+	/* USB device descriptor fields */
+	__u16 vendor_id;
+
+	/* Default product ID. */
+	__u16 product_id;
+
+	/* Product ID when adb is enabled. */
+	__u16 adb_product_id;
+
+	__u16 version;
+
+	char *product_name;
+	char *manufacturer_name;
+	char *serial_number;
+
+	/* number of LUNS for mass storage function */
+	int nluns;
 };
+
+/* Platform data for "usb_mass_storage" driver.
+ * Contains values for the SC_INQUIRY SCSI command. */
+struct usb_mass_storage_platform_data {
+	char *vendor;
+	char *product;
+	int release;
+};
+
+extern void android_usb_set_connected(int on);
 
 #endif	/* __LINUX_USB_ANDROID_H */
