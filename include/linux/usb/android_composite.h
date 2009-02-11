@@ -18,7 +18,6 @@
 #define	__LINUX_USB_ANDROID_H
 
 #include <linux/usb/composite.h>
-#include <linux/if_ether.h>
 
 struct android_usb_function {
 	struct list_head	list;
@@ -77,21 +76,15 @@ struct usb_mass_storage_platform_data {
 	char *product;
 	int release;
 
-	char can_stall;
 	/* number of LUNS */
 	int nluns;
 };
 
-/* Platform data for USB ethernet driver. */
-struct usb_ether_platform_data {
-	u8	ethaddr[ETH_ALEN];
-	u32	vendorID;
-	const char *vendorDescr;
-};
+extern void android_usb_set_connected(int on);
 
 extern void android_register_function(struct android_usb_function *f);
 
-extern int android_enable_function(struct usb_function *f, int enable);
+extern void android_enable_function(struct usb_function *f, int enable);
 
 
 #endif	/* __LINUX_USB_ANDROID_H */
