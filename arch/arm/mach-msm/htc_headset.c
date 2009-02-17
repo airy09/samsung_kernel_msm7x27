@@ -52,6 +52,7 @@
 */
 
 #include <linux/module.h>
+#include <linux/slab.h>
 #include <linux/sysdev.h>
 #include <linux/fs.h>
 #include <linux/interrupt.h>
