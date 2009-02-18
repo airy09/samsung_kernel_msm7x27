@@ -49,7 +49,7 @@ static int sapphire_backlight_brightness =
 static uint8_t sapphire_backlight_last_level = 33;
 static DEFINE_MUTEX(sapphire_backlight_lock);
 
-/* Divide dimming level into 12 sections, and restrict maximum level to 27 */
+/* Divid dimming level into 12 sections, and restrict maximum level to 27 */
 #define DIMMING_STEPS       12
 static unsigned dimming_levels[NUM_OF_SAPPHIRE_PANELS][DIMMING_STEPS] = {
 	{0, 1, 2, 3, 6, 9, 11, 13, 16, 19, 22, 25},         /* Sharp */
@@ -60,16 +60,16 @@ static unsigned pwrsink_percents[] = {0, 6, 8, 15, 26, 34, 46, 54, 65, 77, 87,
 
 static void sapphire_set_backlight_level(uint8_t level)
 {
-	unsigned dimming_factor = 255/DIMMING_STEPS + 1;
-	int index = (level + dimming_factor - 1) / dimming_factor;
-	unsigned percent;
+	unsigned dimming_factor = 255/DIMMING_STEPS + 1 ;
+	unsigned percent = ((int)level * 100) / 255;
 	unsigned long flags;
 	int i = 0;
 
 	printk(KERN_INFO "level=%d, new level=dimming_levels[%d]=%d\n",
-		level, index, dimming_levels[g_panel_id][index]);
-		percent = pwrsink_percents[index];
-		level = dimming_levels[g_panel_id][index];
+		level, level/dimming_factor,
+		dimming_levels[g_panel_id][level/dimming_factor]);
+	percent = pwrsink_percents[level/dimming_factor];
+	level = dimming_levels[g_panel_id][level/dimming_factor];
 
 	if (sapphire_backlight_last_level == level)
 		return;
@@ -620,7 +620,7 @@ static struct platform_device sapphire_backlight = {
 int __init sapphire_init_panel(void)
 {
 	int rc = -1;
-	uint32_t config = PCOM_GPIO_CFG(27, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA); /* GPIO27 */
+	uint32_t config = PCOM_GPIO_CFG(27, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_8MA); /* GPIO27 */
 
 	if (!machine_is_sapphire())
 		return 0;

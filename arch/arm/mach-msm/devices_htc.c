@@ -26,7 +26,6 @@
 #include <mach/board_htc.h>
 #include <mach/msm_hsusb.h>
 #include <linux/usb/mass_storage_function.h>
-#include <linux/usb/android.h>
 
 #include <asm/mach/flash.h>
 #include <asm/setup.h>
@@ -84,7 +83,6 @@ close:
 /* adjust eye diagram, disable vbusvalid interrupts */
 static int hsusb_phy_init_seq[] = { 0x40, 0x31, 0x1D, 0x0D, 0x1D, 0x10, -1 };
 
-#ifdef CONFIG_USB_FUNCTION
 static char *usb_functions[] = {
 #if defined(CONFIG_USB_FUNCTION_MASS_STORAGE) || defined(CONFIG_USB_FUNCTION_UMS)
 	"usb_mass_storage",
@@ -104,12 +102,11 @@ static struct msm_hsusb_product usb_products[] = {
 		.functions	= 0x00000043, /* usb_mass_storage + adb */
 	},
 };
-#endif
 
+#ifdef CONFIG_USB_FUNCTION
 struct msm_hsusb_platform_data msm_hsusb_pdata = {
 	.phy_reset = internal_phy_reset,
 	.phy_init_seq = hsusb_phy_init_seq,
-#ifdef CONFIG_USB_FUNCTION
 	.vendor_id = 0x0bb4,
 	.product_id = 0x0c02,
 	.version = 0x0100,
@@ -120,10 +117,8 @@ struct msm_hsusb_platform_data msm_hsusb_pdata = {
 	.num_functions = ARRAY_SIZE(usb_functions),
 	.products = usb_products,
 	.num_products = ARRAY_SIZE(usb_products),
-#endif
 };
 
-#ifdef CONFIG_USB_FUNCTION
 static struct usb_mass_storage_platform_data mass_storage_pdata = {
 	.nluns = 1,
 	.buf_size = 16384,
@@ -139,7 +134,6 @@ static struct platform_device usb_mass_storage_device = {
 		.platform_data = &mass_storage_pdata,
 		},
 };
-#endif
 
 #ifdef CONFIG_USB_ANDROID
 static struct android_usb_platform_data android_usb_pdata = {
@@ -163,47 +157,45 @@ static struct platform_device android_usb_device = {
 
 void __init msm_add_usb_devices(void (*phy_reset) (void))
 {
-	/* setup */
 	if (phy_reset)
 		msm_hsusb_pdata.phy_reset = phy_reset;
+	/* setup */
 	msm_device_hsusb.dev.platform_data = &msm_hsusb_pdata;
 	platform_device_register(&msm_device_hsusb);
 #ifdef CONFIG_USB_FUNCTION_MASS_STORAGE
 	platform_device_register(&usb_mass_storage_device);
 #endif
-#ifdef CONFIG_USB_ANDROID
-	platform_device_register(&android_usb_device);
-#endif
 }
+#endif
 
 static struct android_pmem_platform_data pmem_pdata = {
 	.name = "pmem",
-	.allocator_type = PMEM_ALLOCATORTYPE_ALLORNOTHING,
+	.no_allocator = 1,
 	.cached = 1,
 };
 
 static struct android_pmem_platform_data pmem_adsp_pdata = {
 	.name = "pmem_adsp",
-	.allocator_type = PMEM_ALLOCATORTYPE_BUDDYBESTFIT,
+	.no_allocator = 0,
 	.cached = 0,
 };
 
 static struct android_pmem_platform_data pmem_camera_pdata = {
 	.name = "pmem_camera",
-	.allocator_type = PMEM_ALLOCATORTYPE_BUDDYBESTFIT,
+	.no_allocator = 0,
 	.cached = 0,
 };
 
 static struct android_pmem_platform_data pmem_gpu0_pdata = {
 	.name = "pmem_gpu0",
-	.allocator_type = PMEM_ALLOCATORTYPE_ALLORNOTHING,
+	.no_allocator = 1,
 	.cached = 0,
 	.buffered = 1,
 };
 
 static struct android_pmem_platform_data pmem_gpu1_pdata = {
 	.name = "pmem_gpu1",
-	.allocator_type = PMEM_ALLOCATORTYPE_ALLORNOTHING,
+	.no_allocator = 1,
 	.cached = 0,
 	.buffered = 1,
 };
@@ -432,18 +424,10 @@ int board_mfg_mode(void)
 
 static int __init board_serialno_setup(char *serialno)
 {
-	char *str;
-
 	if (board_mfg_mode() || !strlen(serialno))
-		str = df_serialno;
+		msm_hsusb_pdata.serial_number = df_serialno;
 	else
-		str = serialno;
-#ifdef CONFIG_USB_FUNCTION
-	msm_hsusb_pdata.serial_number = str;
-#endif
-#ifdef CONFIG_USB_ANDROID
-	android_usb_pdata.serial_number = str;
-#endif
+		msm_hsusb_pdata.serial_number = serialno;
 	return 1;
 }
 

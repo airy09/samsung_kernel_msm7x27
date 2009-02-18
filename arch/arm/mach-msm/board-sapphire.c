@@ -28,6 +28,12 @@
 #include <mach/htc_headset.h>
 #include <linux/sysdev.h>
 #include <linux/android_pmem.h>
+#ifdef CONFIG_USB_FUNCTION
+#include <linux/usb/mass_storage_function.h>
+#endif
+#ifdef CONFIG_USB_ANDROID
+#include <linux/usb/android.h>
+#endif
 
 #include <linux/delay.h>
 
@@ -55,10 +61,10 @@
 
 #include "gpio_chip.h"
 #include "board-sapphire.h"
-#include "pm.h"
 
 #include <mach/board.h>
 #include <mach/board_htc.h>
+#include <mach/msm_hsusb.h>
 #include <mach/msm_serial_hs.h>
 #include <mach/htc_pwrsink.h>
 
@@ -197,45 +203,8 @@ static struct gpio_event_platform_data sapphire_nav_data = {
 static struct platform_device sapphire_nav_device = {
 	.name = GPIO_EVENT_DEV_NAME,
 	.id = 2,
-	.dev = {
-		.platform_data = &sapphire_nav_data,
-	},
-};
-
-/* a new search button to be a wake-up source */
-static struct gpio_event_direct_entry sapphire_search_button_v1[] = {
-	{ SAPPHIRE_GPIO_SEARCH_ACT_N, KEY_COMPOSE }, /* CPLD Key Search*/
-};
-
-static struct gpio_event_direct_entry sapphire_search_button_v2[] = {
-	{ SAPPHIRE_GPIO_SEARCH_ACT_N, KEY_HOME }, /* CPLD Key Home */
-};
-
-static struct gpio_event_input_info sapphire_search_button_info = {
-	.info.func = gpio_event_input_func,
-	/* .flags = GPIOEDF_PRINT_KEYS | GPIOEDF_PRINT_KEY_DEBOUNCE, */
-	.flags = 0,
-	.poll_time.tv.nsec = 40 * NSEC_PER_MSEC,
-	.type = EV_KEY,
-	.keymap = sapphire_search_button_v2,
-	.keymap_size = ARRAY_SIZE(sapphire_search_button_v2)
-};
-
-static struct gpio_event_info *sapphire_search_info[] = {
-	&sapphire_search_button_info.info
-};
-
-static struct gpio_event_platform_data sapphire_search_button_data = {
-	.name = "sapphire-nav-button",
-	.info = sapphire_search_info,
-	.info_count = ARRAY_SIZE(sapphire_search_info),
-};
-
-static struct platform_device sapphire_search_button_device = {
-	.name = GPIO_EVENT_DEV_NAME,
-	.id = 1,
-	.dev = {
-		.platform_data = &sapphire_search_button_data,
+	.dev		= {
+		.platform_data	= &sapphire_nav_data,
 	},
 };
 
@@ -259,20 +228,22 @@ struct platform_device sapphire_reset_keys_device = {
 	.dev.platform_data = &sapphire_reset_keys_pdata,
 };
 
-static int gpio_tp_ls_en = SAPPHIRE_TP_LS_EN;
-
 static int sapphire_ts_power(int on)
 {
+	int gpio_tp_ls_en = SAPPHIRE_TP_LS_EN;
+
+	if (is_12pin_camera())
+		gpio_tp_ls_en = SAPPHIRE20_TP_LS_EN;
+
 	if (on) {
 		sapphire_gpio_write(NULL, SAPPHIRE_GPIO_TP_EN, 1);
 		/* touchscreen must be powered before we enable i2c pullup */
 		msleep(2);
 		/* enable touch panel level shift */
-		gpio_direction_output(gpio_tp_ls_en, 1);
+		gpio_set_value(gpio_tp_ls_en, 1);
 		msleep(2);
 	} else {
-		gpio_direction_output(gpio_tp_ls_en, 0);
-		udelay(50);
+		gpio_set_value(gpio_tp_ls_en, 0);
 		sapphire_gpio_write(NULL, SAPPHIRE_GPIO_TP_EN, 0);
 	}
 
@@ -349,6 +320,21 @@ static struct elan_i2c_platform_data elan_i2c_data[] = {
 	}
 };
 
+static struct msm_camera_device_platform_data msm_camera_device_mt9t013 = {
+	.sensor_reset	= 108,
+	.sensor_pwd	= 85,
+	.vcm_pwd	= SAPPHIRE_GPIO_VCM_PWDN,
+	.config_gpio_on = config_sapphire_camera_on_gpios,
+	.config_gpio_off = config_sapphire_camera_off_gpios,
+};
+
+static struct platform_device sapphire_camera = {
+	.name           = "camera",
+	.dev            = {
+		.platform_data = &msm_camera_device_mt9t013,
+	},
+};
+
 static struct i2c_board_info i2c_devices[] = {
 	{
 		I2C_BOARD_INFO(SYNAPTICS_I2C_RMI_NAME, 0x20),
@@ -365,23 +351,10 @@ static struct i2c_board_info i2c_devices[] = {
 		.platform_data = &compass_platform_data,
 		.irq = SAPPHIRE_GPIO_TO_INT(SAPPHIRE_GPIO_COMPASS_IRQ),
 	},
-#ifdef CONFIG_MSM_CAMERA
-#ifdef CONFIG_MT9P012
-	{
-		I2C_BOARD_INFO("mt9p012", 0x6C >> 1),
-	},
-#endif
-#ifdef CONFIG_MT9T013
-	{
-		I2C_BOARD_INFO("mt9t013", 0x6C),
-	},
-#endif
-#endif/*CONIFIG_MSM_CAMERA*/
-#ifdef CONFIG_SENSORS_MT9T013
 	{
 		I2C_BOARD_INFO("mt9t013", 0x6C >> 1),
+		.platform_data = &msm_camera_device_mt9t013,
 	},
-#endif
 };
 
 #ifdef CONFIG_LEDS_CPLD
@@ -401,6 +374,7 @@ static struct platform_device android_CPLD_leds = {
 };
 #endif
 
+#if 0
 static struct gpio_led android_led_list[] = {
 	{
 		.name = "button-backlight",
@@ -417,9 +391,10 @@ static struct platform_device android_leds = {
 	.name		= "leds-gpio",
 	.id		= -1,
 	.dev		= {
-		.platform_data = &android_leds_data,
+		.platform_data	= &android_leds_data,
 	},
 };
+#endif
 
 #ifdef CONFIG_HTC_HEADSET
 /* RTS/CTS to GPO/GPI. */
@@ -428,17 +403,17 @@ static uint32_t uart1_on_gpio_table[] = {
 	#ifdef CONFIG_SERIAL_MSM_HS
 	/* RTS */
 	PCOM_GPIO_CFG(SAPPHIRE_GPIO_UART1_RTS, 2,
-		      GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_8MA),
+		      GPIO_OUTPUT, GPIO_PULL_UP, GPIO_8MA),
 	/* CTS */
 	PCOM_GPIO_CFG(SAPPHIRE_GPIO_UART1_CTS, 2,
-		      GPIO_CFG_INPUT, GPIO_CFG_PULL_UP, GPIO_CFG_8MA),
+		      GPIO_INPUT, GPIO_PULL_UP, GPIO_8MA),
 	#else
 	/* RTS */
 	PCOM_GPIO_CFG(SAPPHIRE_GPIO_UART1_RTS, 1,
-		      GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_4MA),
+		      GPIO_OUTPUT, GPIO_PULL_UP, GPIO_4MA),
 	/* CTS */
 	PCOM_GPIO_CFG(SAPPHIRE_GPIO_UART1_CTS, 1,
-		      GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_4MA),
+		      GPIO_INPUT, GPIO_PULL_DOWN, GPIO_4MA),
 	#endif
 };
 
@@ -446,30 +421,30 @@ static uint32_t uart1_on_gpio_table[] = {
 static uint32_t uart1_off_gpio_table[] = {
 	/* RTS */
 	PCOM_GPIO_CFG(SAPPHIRE_GPIO_UART1_RTS, 0,
-		      GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
+		      GPIO_OUTPUT, GPIO_NO_PULL, GPIO_2MA),
 	/* CTS */
 	PCOM_GPIO_CFG(SAPPHIRE_GPIO_UART1_CTS, 0,
-		      GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
+		      GPIO_INPUT, GPIO_NO_PULL, GPIO_2MA),
 };
 
 /* Sapphire: Switch between UART3 and GPIO */
 static uint32_t uart3_on_gpio_table[] = {
 	/* RX */
 	PCOM_GPIO_CFG(SAPPHIRE_GPIO_UART3_RX, 1,
-		      GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
+		      GPIO_INPUT, GPIO_NO_PULL, GPIO_2MA),
 	/* TX */
 	PCOM_GPIO_CFG(SAPPHIRE_GPIO_UART3_TX, 1,
-		      GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
+		      GPIO_OUTPUT, GPIO_NO_PULL, GPIO_2MA),
 };
 
 /* set TX,RX to GPI */
 static uint32_t uart3_off_gpi_table[] = {
 	/* RX, H2W DATA */
 	PCOM_GPIO_CFG(SAPPHIRE_GPIO_H2W_DATA, 0,
-		      GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
+		      GPIO_INPUT, GPIO_NO_PULL, GPIO_2MA),
 	/* TX, H2W CLK */
 	PCOM_GPIO_CFG(SAPPHIRE_GPIO_H2W_CLK, 0,
-		      GPIO_CFG_INPUT, GPIO_CFG_KEEPER, GPIO_CFG_2MA),
+		      GPIO_INPUT, GPIO_KEEPER, GPIO_2MA),
 };
 
 static int sapphire_h2w_path = H2W_GPIO;
@@ -635,6 +610,7 @@ static struct platform_device sapphire_h2w = {
 };
 #endif
 
+#ifdef CONFIG_USB_FUNCTION
 static void sapphire_phy_reset(void)
 {
 	gpio_set_value(SAPPHIRE_GPIO_USB_PHY_RST_N, 0);
@@ -642,6 +618,7 @@ static void sapphire_phy_reset(void)
 	gpio_set_value(SAPPHIRE_GPIO_USB_PHY_RST_N, 1);
 	mdelay(10);
 }
+#endif
 
 static struct pwr_sink sapphire_pwrsink_table[] = {
 	{
@@ -690,28 +667,6 @@ static struct pwr_sink sapphire_pwrsink_table[] = {
 		.percent_util = 38,
 	},
 };
-
-static int sapphire_pwrsink_resume_early(struct platform_device *pdev)
-{
-	htc_pwrsink_set(PWRSINK_SYSTEM_LOAD, 7);
-	return 0;
-}
-
-static void sapphire_pwrsink_resume_late(struct early_suspend *h)
-{
-	htc_pwrsink_set(PWRSINK_SYSTEM_LOAD, 38);
-}
-
-static void sapphire_pwrsink_suspend_early(struct early_suspend *h)
-{
-	htc_pwrsink_set(PWRSINK_SYSTEM_LOAD, 7);
-}
-
-static int sapphire_pwrsink_suspend_late(struct platform_device *pdev, pm_message_t state)
-{
-	htc_pwrsink_set(PWRSINK_SYSTEM_LOAD, 1);
-	return 0;
-}
 
 static struct pwr_sink_platform_data sapphire_pwrsink_data = {
 	.num_sinks	= ARRAY_SIZE(sapphire_pwrsink_table),
@@ -837,75 +792,8 @@ static struct platform_device sapphire_snd = {
 	},
 };
 
-#ifdef CONFIG_MSM_CAMERA
-void config_sapphire_camera_on_gpios(void);
-void config_sapphire_camera_on_gpios(void);
-static struct msm_camera_device_platform_data msm_camera_device_data = {
-	.camera_gpio_on  = config_sapphire_camera_on_gpios,
-	.camera_gpio_off = config_sapphire_camera_off_gpios,
-	.ioext.mdcphy = MSM_MDC_PHYS,
-	.ioext.mdcsz  = MSM_MDC_SIZE,
-	.ioext.appphy = MSM_CLK_CTL_PHYS,
-	.ioext.appsz  = MSM_CLK_CTL_SIZE,
-};
-
-#ifdef CONFIG_MT9T013
-static struct msm_camera_sensor_info msm_camera_sensor_mt9t013_data = {
-	.sensor_name    = "mt9t013",
-	.sensor_reset   = 108,
-	.sensor_pwd     = 85,
-	.vcm_pwd        = SAPPHIRE_GPIO_VCM_PWDN,
-	.pdata          = &msm_camera_device_data,
-	.flash_type     = MSM_CAMERA_FLASH_NONE
-};
-
-static struct platform_device msm_camera_sensor_mt9t013 = {
-	.name           = "msm_camera_mt9t013",
-	.dev            = {
-		.platform_data = &msm_camera_sensor_mt9t013_data,
-	},
-};
-#endif
-
-#ifdef CONFIG_MT9P012
-static struct msm_camera_sensor_info msm_camera_sensor_mt9p012_data = {
-	.sensor_name	= "mt9p012",
-	.sensor_reset	= 108,
-	.sensor_pwd	= 85,
-	.vcm_pwd        = SAPPHIRE_GPIO_VCM_PWDN,
-	.pdata		= &msm_camera_device_data,
-	.flash_type     = MSM_CAMERA_FLASH_NONE
-};
-
-static struct platform_device msm_camera_sensor_mt9p012 = {
-	.name           = "msm_camera_mt9p012",
-	.dev            = {
-		.platform_data = &msm_camera_sensor_mt9p012_data,
-	},
-};
-#endif
-#endif/*CONFIG_MSM_CAMERA*/
-
-#ifdef CONFIG_SENSORS_MT9T013
-static struct msm_camera_legacy_device_platform_data msm_camera_device_mt9t013 = {
-	.sensor_reset	= 108,
-	.sensor_pwd	= 85,
-	.vcm_pwd	= SAPPHIRE_GPIO_VCM_PWDN,
-	.config_gpio_on = config_sapphire_camera_on_gpios,
-	.config_gpio_off = config_sapphire_camera_off_gpios,
-};
-
-static struct platform_device sapphire_camera = {
-	.name           = "camera",
-	.dev            = {
-		.platform_data = &msm_camera_device_mt9t013,
-	},
-};
-#endif
-
 static struct platform_device *devices[] __initdata = {
 	&msm_device_smd,
-	&msm_device_dmov,
 	&msm_device_nand,
 	&msm_device_i2c,
 	&msm_device_uart1,
@@ -917,18 +805,11 @@ static struct platform_device *devices[] __initdata = {
 #endif
 	&sapphire_nav_device,
 	&sapphire_reset_keys_device,
-	&android_leds,
 #ifdef CONFIG_LEDS_CPLD
 	&android_CPLD_leds,
 #endif
 #ifdef CONFIG_HTC_HEADSET
 	&sapphire_h2w,
-#endif
-#ifdef CONFIG_MT9T013
-	&msm_camera_sensor_mt9t013,
-#endif
-#ifdef CONFIG_MT9P012
-	&msm_camera_sensor_mt9p012,
 #endif
 	&sapphire_rfkill,
 #ifdef CONFIG_WIFI_CONTROL_FUNC
@@ -939,9 +820,7 @@ static struct platform_device *devices[] __initdata = {
 	&sapphire_pwr_sink,
 #endif
 	&sapphire_snd,
-#ifdef CONFIG_SENSORS_MT9T013
 	&sapphire_camera,
-#endif
 };
 
 extern struct sys_timer msm_timer;
@@ -970,93 +849,93 @@ static void sapphire_reset(void)
 static uint32_t gpio_table[] = {
 	/* BLUETOOTH */
 #ifdef CONFIG_SERIAL_MSM_HS
-	PCOM_GPIO_CFG(43, 2, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_4MA), /* RTS */
-	PCOM_GPIO_CFG(44, 2, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_4MA), /* CTS */
-	PCOM_GPIO_CFG(45, 2, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_4MA), /* RX */
-	PCOM_GPIO_CFG(46, 3, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_4MA), /* TX */
+	PCOM_GPIO_CFG(43, 2, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_4MA), /* RTS */
+	PCOM_GPIO_CFG(44, 2, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_4MA), /* CTS */
+	PCOM_GPIO_CFG(45, 2, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_4MA), /* RX */
+	PCOM_GPIO_CFG(46, 3, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_4MA), /* TX */
 #else
-	PCOM_GPIO_CFG(43, 1, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_4MA), /* RTS */
-	PCOM_GPIO_CFG(44, 1, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_4MA), /* CTS */
-	PCOM_GPIO_CFG(45, 1, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_4MA), /* RX */
-	PCOM_GPIO_CFG(46, 1, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_4MA), /* TX */
+	PCOM_GPIO_CFG(43, 1, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_4MA), /* RTS */
+	PCOM_GPIO_CFG(44, 1, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_4MA), /* CTS */
+	PCOM_GPIO_CFG(45, 1, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_4MA), /* RX */
+	PCOM_GPIO_CFG(46, 1, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_4MA), /* TX */
 #endif
 };
 
 
 static uint32_t camera_off_gpio_table[] = {
 	/* CAMERA */
-	PCOM_GPIO_CFG(2, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT2 */
-	PCOM_GPIO_CFG(3, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT3 */
-	PCOM_GPIO_CFG(4, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT4 */
-	PCOM_GPIO_CFG(5, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT5 */
-	PCOM_GPIO_CFG(6, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT6 */
-	PCOM_GPIO_CFG(7, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT7 */
-	PCOM_GPIO_CFG(8, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT8 */
-	PCOM_GPIO_CFG(9, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT9 */
-	PCOM_GPIO_CFG(10, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT10 */
-	PCOM_GPIO_CFG(11, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT11 */
-	PCOM_GPIO_CFG(12, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* PCLK */
-	PCOM_GPIO_CFG(13, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* HSYNC_IN */
-	PCOM_GPIO_CFG(14, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* VSYNC_IN */
-	PCOM_GPIO_CFG(15, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* MCLK */
+	PCOM_GPIO_CFG(2, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT2 */
+	PCOM_GPIO_CFG(3, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT3 */
+	PCOM_GPIO_CFG(4, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT4 */
+	PCOM_GPIO_CFG(5, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT5 */
+	PCOM_GPIO_CFG(6, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT6 */
+	PCOM_GPIO_CFG(7, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT7 */
+	PCOM_GPIO_CFG(8, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT8 */
+	PCOM_GPIO_CFG(9, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT9 */
+	PCOM_GPIO_CFG(10, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT10 */
+	PCOM_GPIO_CFG(11, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT11 */
+	PCOM_GPIO_CFG(12, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* PCLK */
+	PCOM_GPIO_CFG(13, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* HSYNC_IN */
+	PCOM_GPIO_CFG(14, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* VSYNC_IN */
+	PCOM_GPIO_CFG(15, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* MCLK */
 };
 
 static uint32_t camera_on_gpio_table[] = {
 	/* CAMERA */
-	PCOM_GPIO_CFG(2, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* DAT2 */
-	PCOM_GPIO_CFG(3, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* DAT3 */
-	PCOM_GPIO_CFG(4, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* DAT4 */
-	PCOM_GPIO_CFG(5, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* DAT5 */
-	PCOM_GPIO_CFG(6, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* DAT6 */
-	PCOM_GPIO_CFG(7, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* DAT7 */
-	PCOM_GPIO_CFG(8, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* DAT8 */
-	PCOM_GPIO_CFG(9, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* DAT9 */
-	PCOM_GPIO_CFG(10, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* DAT10 */
-	PCOM_GPIO_CFG(11, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* DAT11 */
-	PCOM_GPIO_CFG(12, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_16MA), /* PCLK */
-	PCOM_GPIO_CFG(13, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* HSYNC_IN */
-	PCOM_GPIO_CFG(14, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* VSYNC_IN */
-	PCOM_GPIO_CFG(15, 1, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_16MA), /* MCLK */
+	PCOM_GPIO_CFG(2, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* DAT2 */
+	PCOM_GPIO_CFG(3, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* DAT3 */
+	PCOM_GPIO_CFG(4, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* DAT4 */
+	PCOM_GPIO_CFG(5, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* DAT5 */
+	PCOM_GPIO_CFG(6, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* DAT6 */
+	PCOM_GPIO_CFG(7, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* DAT7 */
+	PCOM_GPIO_CFG(8, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* DAT8 */
+	PCOM_GPIO_CFG(9, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* DAT9 */
+	PCOM_GPIO_CFG(10, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* DAT10 */
+	PCOM_GPIO_CFG(11, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* DAT11 */
+	PCOM_GPIO_CFG(12, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_16MA), /* PCLK */
+	PCOM_GPIO_CFG(13, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* HSYNC_IN */
+	PCOM_GPIO_CFG(14, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* VSYNC_IN */
+	PCOM_GPIO_CFG(15, 1, GPIO_OUTPUT, GPIO_PULL_DOWN, GPIO_16MA), /* MCLK */
 };
 
 static uint32_t camera_off_gpio_12pins_table[] = {
 	/* CAMERA */
-	PCOM_GPIO_CFG(0, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT0 */
-	PCOM_GPIO_CFG(1, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT1 */
-	PCOM_GPIO_CFG(2, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT2 */
-	PCOM_GPIO_CFG(3, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT3 */
-	PCOM_GPIO_CFG(4, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT4 */
-	PCOM_GPIO_CFG(5, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT5 */
-	PCOM_GPIO_CFG(6, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT6 */
-	PCOM_GPIO_CFG(7, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT7 */
-	PCOM_GPIO_CFG(8, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT8 */
-	PCOM_GPIO_CFG(9, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT9 */
-	PCOM_GPIO_CFG(10, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT10 */
-	PCOM_GPIO_CFG(11, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT11 */
-	PCOM_GPIO_CFG(12, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* PCLK */
-	PCOM_GPIO_CFG(13, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* HSYNC_IN */
-	PCOM_GPIO_CFG(14, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* VSYNC_IN */
-	PCOM_GPIO_CFG(15, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* MCLK */
+	PCOM_GPIO_CFG(0, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT0 */
+	PCOM_GPIO_CFG(1, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT1 */
+	PCOM_GPIO_CFG(2, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT2 */
+	PCOM_GPIO_CFG(3, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT3 */
+	PCOM_GPIO_CFG(4, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT4 */
+	PCOM_GPIO_CFG(5, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT5 */
+	PCOM_GPIO_CFG(6, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT6 */
+	PCOM_GPIO_CFG(7, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT7 */
+	PCOM_GPIO_CFG(8, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT8 */
+	PCOM_GPIO_CFG(9, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT9 */
+	PCOM_GPIO_CFG(10, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT10 */
+	PCOM_GPIO_CFG(11, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT11 */
+	PCOM_GPIO_CFG(12, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* PCLK */
+	PCOM_GPIO_CFG(13, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* HSYNC_IN */
+	PCOM_GPIO_CFG(14, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* VSYNC_IN */
+	PCOM_GPIO_CFG(15, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* MCLK */
 };
 
 static uint32_t camera_on_gpio_12pins_table[] = {
 	/* CAMERA */
-	PCOM_GPIO_CFG(0, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* DAT0 */
-	PCOM_GPIO_CFG(1, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* DAT1 */
-	PCOM_GPIO_CFG(2, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* DAT2 */
-	PCOM_GPIO_CFG(3, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* DAT3 */
-	PCOM_GPIO_CFG(4, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* DAT4 */
-	PCOM_GPIO_CFG(5, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* DAT5 */
-	PCOM_GPIO_CFG(6, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* DAT6 */
-	PCOM_GPIO_CFG(7, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* DAT7 */
-	PCOM_GPIO_CFG(8, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* DAT8 */
-	PCOM_GPIO_CFG(9, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* DAT9 */
-	PCOM_GPIO_CFG(10, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* DAT10 */
-	PCOM_GPIO_CFG(11, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* DAT11 */
-	PCOM_GPIO_CFG(12, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_16MA), /* PCLK */
-	PCOM_GPIO_CFG(13, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* HSYNC_IN */
-	PCOM_GPIO_CFG(14, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), /* VSYNC_IN */
-	PCOM_GPIO_CFG(15, 1, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_16MA), /* MCLK */
+	   PCOM_GPIO_CFG(0, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* DAT0 */
+       PCOM_GPIO_CFG(1, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* DAT1 */
+       PCOM_GPIO_CFG(2, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* DAT2 */
+       PCOM_GPIO_CFG(3, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* DAT3 */
+       PCOM_GPIO_CFG(4, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* DAT4 */
+       PCOM_GPIO_CFG(5, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* DAT5 */
+       PCOM_GPIO_CFG(6, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* DAT6 */
+       PCOM_GPIO_CFG(7, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* DAT7 */
+       PCOM_GPIO_CFG(8, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* DAT8 */
+       PCOM_GPIO_CFG(9, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* DAT9 */
+       PCOM_GPIO_CFG(10, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* DAT10 */
+       PCOM_GPIO_CFG(11, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* DAT11 */
+       PCOM_GPIO_CFG(12, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_16MA), /* PCLK */
+       PCOM_GPIO_CFG(13, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* HSYNC_IN */
+       PCOM_GPIO_CFG(14, 1, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA), /* VSYNC_IN */
+       PCOM_GPIO_CFG(15, 1, GPIO_OUTPUT, GPIO_PULL_DOWN, GPIO_16MA), /* MCLK */
 };
 
 static void config_gpio_table(uint32_t *table, int len)
@@ -1074,10 +953,10 @@ void config_sapphire_camera_on_gpios(void)
 	/*Add for judage it's 10 pins or 12 pins platform ----->*/
 	if  (is_12pin_camera()) {
 		config_gpio_table(camera_on_gpio_12pins_table,
-				ARRAY_SIZE(camera_on_gpio_12pins_table));
+				  ARRAY_SIZE(camera_on_gpio_12pins_table));
 	} else {
 		config_gpio_table(camera_on_gpio_table,
-				ARRAY_SIZE(camera_on_gpio_table));
+				  ARRAY_SIZE(camera_on_gpio_table));
 	}
 	/*End Of Add for judage it's 10 pins or 12 pins platform*/
 }
@@ -1108,6 +987,8 @@ static struct msm_acpu_clock_platform_data sapphire_clock_data = {
 	.acpu_switch_time_us = 20,
 	.max_speed_delta_khz = 256000,
 	.vdd_switch_time_us = 62,
+	.power_collapse_khz = 19200000,
+	.wait_for_irq_khz = 128000000,
 };
 
 #ifdef CONFIG_SERIAL_MSM_HS
@@ -1117,12 +998,6 @@ static struct msm_serial_hs_platform_data msm_uart_dm1_pdata = {
 	.rx_to_inject = 0x32,
 };
 #endif
-
-static struct msm_pm_platform_data msm_pm_data[MSM_PM_SLEEP_MODE_NR] = {
-	[MSM_PM_SLEEP_MODE_POWER_COLLAPSE].latency = 16000,
-	[MSM_PM_SLEEP_MODE_POWER_COLLAPSE_NO_XO_SHUTDOWN].latency = 12000,
-	[MSM_PM_SLEEP_MODE_RAMP_DOWN_AND_WAIT_FOR_INTERRUPT].latency = 2000,
-};
 
 static void __init sapphire_init(void)
 {
@@ -1184,16 +1059,8 @@ static void __init sapphire_init(void)
 #endif
 	msm_init_pmic_vibrator();
 
-	if(system_rev != 0x80)
-		sapphire_search_button_info.keymap = sapphire_search_button_v1;
-
-	if (is_12pin_camera())
-		gpio_tp_ls_en = SAPPHIRE20_TP_LS_EN;
-	gpio_request(gpio_tp_ls_en, "tp_ls_en");
-
-	i2c_register_board_info(0, i2c_devices, ARRAY_SIZE(i2c_devices));
-	msm_pm_set_platform_data(msm_pm_data, ARRAY_SIZE(msm_pm_data));
 	platform_add_devices(devices, ARRAY_SIZE(devices));
+	i2c_register_board_info(0, i2c_devices, ARRAY_SIZE(i2c_devices));
 }
 
 static struct map_desc sapphire_io_desc[] __initdata = {
@@ -1275,13 +1142,13 @@ static void __init sapphire_fixup(struct machine_desc *desc, struct tag *tags,
 	if (smi_sz == 32) {
 		mi->bank[0].size = (84*1024*1024);
 	} else if (smi_sz == 64) {
-		mi->bank[0].size = (104*1024*1024);
+		mi->bank[0].size = (101*1024*1024);
 	} else {
 		printk(KERN_ERR "can not get smi size\n");
 
 		/*Give a default value when not get smi size*/
 		smi_sz = 64;
-		mi->bank[0].size = (104*1024*1024);
+		mi->bank[0].size = (101*1024*1024);
 		printk(KERN_ERR "use default  :  smisize=%d\n", smi_sz);
 	}
 }
@@ -1290,12 +1157,16 @@ static void __init sapphire_map_io(void)
 {
 	msm_map_common_io();
 	iotable_init(sapphire_io_desc, ARRAY_SIZE(sapphire_io_desc));
-	msm_clock_init();
+	msm_clock_init(msm_clocks_7x01a, msm_num_clocks_7x01a);
 }
 
 MACHINE_START(SAPPHIRE, "sapphire")
 /* Maintainer: Brian Swetland <swetland@google.com> */
-	.boot_params    = PLAT_PHYS_OFFSET + 0x100,
+#ifdef CONFIG_MSM_DEBUG_UART
+	.phys_io        = MSM_DEBUG_UART_PHYS,
+	.io_pg_offst    = ((MSM_DEBUG_UART_BASE) >> 18) & 0xfffc,
+#endif
+	.boot_params    = 0x10000100,
 	.fixup          = sapphire_fixup,
 	.map_io         = sapphire_map_io,
 	.init_irq       = sapphire_init_irq,
