@@ -14,8 +14,12 @@
  *
  */
 
-#ifndef _AUDIO_RPC_H_
-#define _AUDIO_RPC_H_
+#ifndef _ARCH_ARM_MACH_MSM_AUDMGR_H
+#define _ARCH_ARM_MACH_MSM_AUDMGR_H
+
+#if CONFIG_MSM_AMSS_VERSION==6350
+#include "audmgr_new.h"
+#else
 
 enum rpc_aud_def_sample_rate_type {
 	RPC_AUD_DEF_SAMPLE_RATE_NONE,
@@ -164,11 +168,9 @@ struct rpc_audmgr_cb_func_ptr {
 #define AUDMGR_CODEC_LSTR_FUNC_PTR		3
 
 #if CONFIG_MSM_AMSS_VERSION < 6220
-#define AUDMGR_CB_PROG_VERS "rs31000013:5fa922a9"
 #define AUDMGR_CB_PROG 0x31000013
 #define AUDMGR_CB_VERS 0x5fa922a9
 #else
-#define AUDMGR_CB_PROG_VERS "rs31000013:21570ba7"
 #define AUDMGR_CB_PROG 0x31000013
 #define AUDMGR_CB_VERS 0x21570ba7
 #endif
@@ -203,9 +205,11 @@ int audpp_send_queue1(void *cmd, unsigned len);
 int audpp_send_queue2(void *cmd, unsigned len);
 int audpp_send_queue3(void *cmd, unsigned len);
 
+int audpp_pause(unsigned id, int pause);
 int audpp_set_volume_and_pan(unsigned id, unsigned volume, int pan);
 void audpp_avsync(int id, unsigned rate);
 unsigned audpp_avsync_sample_count(int id);
 unsigned audpp_avsync_byte_count(int id);
 
+#endif
 #endif
