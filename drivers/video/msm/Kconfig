@@ -1,6 +1,3 @@
-
-source "drivers/video/msm/vidc/Kconfig"
-
 config FB_MSM
 	tristate
 	depends on FB && ARCH_MSM
@@ -13,4 +10,3 @@ config FB_MSM_LCDC
 	bool "Support for integrated LCD controller in qsd8x50"
 	depends on FB_MSM && MSM_MDP31
 	default y
-
