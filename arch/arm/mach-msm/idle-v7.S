@@ -17,14 +17,7 @@
 
 #include <linux/linkage.h>
 #include <asm/assembler.h>
-
-#ifdef CONFIG_MSM_CPU_AVS
-/* 11 general purpose registers (r4-r14), 10 cp15 registers, 3 AVS registers */
-#define CPU_SAVED_STATE_SIZE (4 * 11 + 4 * 10 + 4 * 3)
-#else
-/* 11 general purpose registers (r4-r14), 10 cp15 registers */
-#define CPU_SAVED_STATE_SIZE (4 * 11 + 4 * 10)
-#endif
+#include <asm/vfpmacros.h>
 
 ENTRY(msm_arch_idle)
 	wfi
@@ -36,12 +29,6 @@ ENTRY(msm_pm_collapse)
 #endif
 
 	ldr     r0, =saved_state
-#if defined(CONFIG_NR_CPUS) && (CONFIG_NR_CPUS >= 2)
-	mrc	p15, 0, r1, c0, c0, 5	/* MPIDR */
-	ands	r1, r1, #15		/* What CPU am I */
-	addne	r0, r0, #CPU_SAVED_STATE_SIZE
-#endif
-
 	stmia   r0!, {r4-r14}
 	mrc     p15, 0, r1, c1, c0, 0 /* MMU control */
 	mrc     p15, 0, r2, c2, c0, 0 /* TTBR0 */
@@ -54,20 +41,12 @@ ENTRY(msm_pm_collapse)
 	mrc     p15, 0, r9, c13, c0, 3 /* TPIDRURO */
 	mrc     p15, 0, ip, c13, c0, 1 /* context ID */
 	stmia   r0!, {r1-r9, ip}
-#ifdef CONFIG_MSM_CPU_AVS
-	mrc     p15, 7, r1, c15, c1, 7 /* AVSCSR is the Adaptive Voltage Scaling
-	                                * Control and Status Register */
-	mrc     p15, 7, r2, c15, c0, 6 /* AVSDSCR is the Adaptive Voltage
-	                                * Scaling Delay Synthesizer Control
-					* Register */
-	mrc     p15, 7, r3, c15, c1, 0 /* TSCSR is the Temperature Status and
-	                                * Control Register
-					*/
-	stmia   r0!, {r1-r3}
-#endif
 
-#ifdef CONFIG_MSM_JTAG_V7
-	bl      msm_save_jtag_debug
+#ifdef CONFIG_VFP
+	VFPFSTMIA r0, r1              /* Save VFP working registers */
+	fmrx    r1, fpexc
+	fmrx    r2, fpscr
+	stmia   r0!, {r1, r2}         /* Save VFP state registers */
 #endif
 	bl      v7_flush_dcache_all
 
@@ -86,13 +65,7 @@ ENTRY(msm_pm_collapse)
 	cpsie   f
 #endif
 
-	ldr     r0, =saved_state        /* restore registers */
-#if defined(CONFIG_NR_CPUS) && (CONFIG_NR_CPUS >= 2)
-	mrc	p15, 0, r1, c0, c0, 5	/* MPIDR */
-	ands	r1, r1, #15		/* What CPU am I */
-	addne	r0, r0, #CPU_SAVED_STATE_SIZE
-#endif
-
+	ldr     r0, =saved_state         /* restore registers */
 	ldmfd   r0, {r4-r14}
 	mov     r0, #0                   /* return power collapse failed */
 	bx      lr
@@ -107,22 +80,81 @@ ENTRY(msm_pm_collapse_exit)
 	mov     r1, #'A'
 	str     r1, [r0, #0x00C]
 #endif
+
+        //; REMOVE FOLLOWING THREE INSTRUCTIONS WHEN POWER COLLAPSE IS ENA
+        //;Make sure the DBGOSLSR[LOCK] bit is cleared to allow access to the debug registers
+        //; Writing anything but the "secret code" to the DBGOSLAR clears the DBGOSLSR[LOCK] bit
+        MCR    p14, 0, r0, c1, c0, 4       //; WCP14_DBGOSLAR r0
+
+
+        //; Read the DBGPRSR to clear the DBGPRSR[STICKYPD]
+        //; Any read to DBGPRSR clear the STICKYPD bit
+        //; ISB guarantees the read completes before attempting to
+        //; execute a CP14 instruction.
+        MRC    p14, 0, r3, c1, c5, 4       //; RCP14_DBGPRSR r3
+        ISB
+
+#if 0 /* allow jtag reconnect */
+1:
+	b	1b
+#endif
+
+        //; Write L2VR3F1 to make L2 array work properly at 998 on Raptor2
+        LDR    r1, =0x00212102 //; the l2 timing watch out on P2
+        MCR    p15, 3, r1, c15, c15, 1 //; WCP15_L2VR3F1
+        DSB
+        ISB
+
+        //; write the value for Icache to run at 998 on Raptor2
+        LDR    r1, =0x3800E000
+        MCR    p15, 0, r1, c15, c15, 0 //; WCP15_PVR0F0
+        ISB
+
+        //; DCIALL to invalidate L2 cache bank (needs to be run 4 times, once per bank)
+        //; This must be done early in code (prior to enabling the caches)
+        MOV    r1, #0x2
+        MCR    p15, 0, r1, c9, c0, 6   //; DCIALL bank D ([15:14] == 2'b00)
+        ORR    r1, r1, #0x00004000
+        MCR    p15, 0, r1, c9, c0, 6   //; DCIALL bank C ([15:14] == 2'b01)
+        ADD    r1, r1, #0x00004000
+        MCR    p15, 0, r1, c9, c0, 6   //; DCIALL bank B ([15:14] == 2'b10)
+        ADD    r1, r1, #0x00004000
+        MCR    p15, 0, r1, c9, c0, 6   //; DCIALL bank A ([15:14] == 2'b11)
+
+        //; DCIALL to invalidate entire D-Cache
+        MCR    p15, 0, r0, c9, c0, 6    //; DCIALL  r0
+
+        //; Initialize the BPCR - setup Global History Mask (GHRM) to all 1's
+        //; and have all address bits (AM) participate.
+        //; Different settings can be used to improve performance
+        MOVW   r1, #0x01FF
+        MOVT   r1, #0x01FF
+        MCR    p15, 7, r1, c15, c0, 2   //; WCP15_BPCR
+
+	dsb
+	isb
+
 	ldr     r1, =saved_state_end
 	ldr     r2, =msm_pm_collapse_exit
 	adr     r3, msm_pm_collapse_exit
 	add     r1, r1, r3
 	sub     r1, r1, r2
-#if defined(CONFIG_NR_CPUS) && (CONFIG_NR_CPUS >= 2)
-	mrc	p15, 0, r2, c0, c0, 5	/* MPIDR */
-	ands	r2, r2, #15		/* What CPU am I */
-	subeq	r1, r1, #CPU_SAVED_STATE_SIZE
-#endif
-
-#ifdef CONFIG_MSM_CPU_AVS
-	ldmdb   r1!, {r2-r4}
-	mcr     p15, 7, r4, c15, c1, 0 /* TSCSR */
-	mcr     p15, 7, r3, c15, c0, 6 /* AVSDSCR */
-	mcr     p15, 7, r2, c15, c1, 7 /* AVSCSR */
+#ifdef CONFIG_VFP
+	mrc     p15, 0, r2, c1, c0, 2 /* Read CP Access Control Register */
+	orr     r2, r2, #0x00F00000   /* Enable full access for p10,11 */
+	mcr     p15, 0, r2, c1, c0, 2 /* Write CPACR */
+	isb
+	mov     r2, #0x40000000       /* Enable VFP */
+	fmxr    fpexc, r2
+	isb
+	ldmdb   r1!, {r2, r3}         /* Read saved VFP state registers */
+	sub     r1, r1, #32*8         /* Jump to start of vfp regs area */
+	VFPFLDMIA r1, r4              /* Restore VFP working registers,
+				       * r1 incremented to end of vfp
+				       * regs area */
+	sub     r1, r1, #32*8         /* Jump back to start of vfp regs area */
+	fmxr    fpscr, r3             /* Restore FPSCR */
+	fmxr    fpexc, r2             /* Restore FPEXC last */
 #endif
 	ldmdb   r1!, {r2-r11}
 	mcr     p15, 0, r4, c3, c0, 0 /* dacr */
@@ -136,25 +168,37 @@ ENTRY(msm_pm_collapse_exit)
 	mcr     p15, 0, r11, c13, c0, 1 /* context ID */
 	isb
 	ldmdb   r1!, {r4-r14}
-	ldr	r0, =msm_pm_pc_pgd
-	ldr	r1, =msm_pm_collapse_exit
-	adr	r3, msm_pm_collapse_exit
-	add	r0, r0, r3
-	sub	r0, r0, r1
-	ldr	r0, [r0]
-	mrc     p15, 0, r1, c2, c0, 0 /* save current TTBR0 */
-	and	r3, r1, #0x7f /* mask to get TTB flags */
-	orr	r0, r0, r3 /* add TTB flags to switch TTBR value */
-	mcr     p15, 0, r0, c2, c0, 0 /* temporary switch TTBR0 */
+	/* Add 1:1 map in the PMD to allow smooth switch when turning on MMU */
+	and     r3, r3, #~0x7F  /* mask off lower 7 bits of TTB */
+	adr     r0, msm_pm_mapped_pa /* get address of the mapped instr */
+	lsr     r1, r0, #20     /* get the addr range of addr in MB */
+	lsl     r1, r1, #2      /* multiply by 4 to get to the pg index */
+	add     r3, r3, r1      /* pgd + pgd_index(addr) */
+	ldr     r1, [r3]        /* save current entry to r1 */
+	lsr     r0, #20         /* align current addr to 1MB boundary */
+	lsl     r0, #20
+	/* Create new entry for this 1MB page */
+	orr     r0, r0, #0x4     /* PMD_SECT_BUFFERED */
+	orr     r0, r0, #0x400   /* PMD_SECT_AP_WRITE */
+	orr     r0, r0, #0x2     /* PMD_TYPE_SECT|PMD_DOMAIN(DOMAIN_KERNEL) */
+	str     r0, [r3]         /* put new entry into the MMU table */
+	mcr     p15, 0, r3, c7, c10, 1  /* flush_pmd */
+	dsb
 	isb
 	mcr     p15, 0, r2, c1, c0, 0   /* MMU control */
 	isb
 msm_pm_mapped_pa:
 	/* Switch to virtual */
+	adr     r2, msm_pm_pa_to_va
 	ldr     r0, =msm_pm_pa_to_va
 	mov     pc, r0
 msm_pm_pa_to_va:
-	mcr     p15, 0, r1, c2, c0, 0 /* restore TTBR0 */
+	sub     r0, r0, r2
+	/* Restore r1 in MMU table */
+	add     r3, r3, r0
+	str     r1, [r3]
+	mcr     p15, 0, r3, c7, c10, 1  /* flush_pmd */
+	dsb
 	isb
 	mcr     p15, 0, r3, c8, c7, 0   /* UTLBIALL */
 	mcr     p15, 0, r3, c7, c5, 6   /* BPIALL */
@@ -162,9 +206,6 @@ msm_pm_pa_to_va:
 	isb
 	stmfd   sp!, {lr}
 	bl      v7_flush_kern_cache_all
-#ifdef CONFIG_MSM_JTAG_V7
-	bl      msm_restore_jtag_debug
-#endif
 	ldmfd   sp!, {lr}
 	mov     r0, #1
 	bx      lr
@@ -178,14 +219,12 @@ msm_pm_pa_to_va:
 
 	.data
 
-	.globl msm_pm_pc_pgd
-msm_pm_pc_pgd:
-	.long	0x0
-
 saved_state:
-#if defined(CONFIG_NR_CPUS) && (CONFIG_NR_CPUS >= 2)
-	.space	CPU_SAVED_STATE_SIZE * 2 /* This code only supports 2 cores */
-#else
-	.space	CPU_SAVED_STATE_SIZE
+	.space  4 * 11 /* r4-14 */
+	.space  4 * 10  /* cp15 */
+#ifdef CONFIG_VFP
+	.space  8 * 32 /* VFP working registers */
+	.space  4 * 2  /* VFP state registers */
 #endif
 saved_state_end:
+
