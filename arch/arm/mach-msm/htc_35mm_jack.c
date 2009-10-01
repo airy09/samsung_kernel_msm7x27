@@ -17,6 +17,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/slab.h>
 #include <linux/sysdev.h>
 #include <linux/fs.h>
 #include <linux/interrupt.h>
@@ -83,7 +84,6 @@ struct h35_info {
 	int is_ext_insert;
 	int key_code;
 	int mic_bias_state;
-	int *is_hpin_stable;
 	struct input_dev *input;
 
 	struct wake_lock headset_wake_lock;
@@ -160,8 +160,6 @@ static void remove_35mm_do_work(struct work_struct *work)
 
 	if (hi->is_ext_insert) {
 		H2WI("Skip 3.5mm headset plug out!!!");
-		if (hi->is_hpin_stable)
-			*(hi->is_hpin_stable) = 1;
 		return;
 	}
 
@@ -175,8 +173,6 @@ static void remove_35mm_do_work(struct work_struct *work)
 		hi->mic_bias_state = 0;
 	}
 	hi->ext_35mm_status = 0;
-	if (hi->is_hpin_stable)
-		*(hi->is_hpin_stable) = 0;
 
 	/* Notify framework via switch class */
 	mutex_lock(&hi->mutex_lock);
@@ -226,19 +222,14 @@ static void insert_35mm_do_work(struct work_struct *work)
 		mutex_lock(&hi->mutex_lock);
 		switch_set_state(&hi->hs_change, hi->ext_35mm_status);
 		mutex_unlock(&hi->mutex_lock);
-
-		if (hi->is_hpin_stable)
-			*(hi->is_hpin_stable) = 1;
 	}
 }
 
-int htc_35mm_key_event(int keycode, int *hpin_stable)
+int htc_35mm_key_event(int keycode)
 {
 	hi->key_code = keycode;
-	hi->is_hpin_stable = hpin_stable;
 
 	if ((hi->ext_35mm_status & BIT_HEADSET) == 0) {
-		*(hi->is_hpin_stable) = 0;
 
 		pr_info("Key press with no mic.  Retrying detection\n");
 		queue_work(detect_wq, &insert_35mm_work);
@@ -248,7 +239,7 @@ int htc_35mm_key_event(int keycode, int *hpin_stable)
 	return 0;
 }
 
-int htc_35mm_jack_plug_event(int insert, int *hpin_stable)
+int htc_35mm_jack_plug_event(int insert)
 {
 	if (!hi) {
 		pr_err("Plug event before driver init\n");
@@ -257,7 +248,6 @@ int htc_35mm_jack_plug_event(int insert, int *hpin_stable)
 
 	mutex_lock(&hi->mutex_lock);
 	hi->is_ext_insert = insert;
-	hi->is_hpin_stable = hpin_stable;
 	mutex_unlock(&hi->mutex_lock);
 
 	H2WI(" %d", hi->is_ext_insert);
