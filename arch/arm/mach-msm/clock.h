@@ -120,5 +120,8 @@ unsigned long clk_get_max_axi_khz(void);
 int clk_output_enable(struct clk *clk);
 void clk_output_disable(struct clk *clk);
 
+void clk_enter_sleep(int from_idle);
+void clk_exit_sleep(void);
+
 #endif
 
