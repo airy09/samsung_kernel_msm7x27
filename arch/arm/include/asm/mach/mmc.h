@@ -19,18 +19,8 @@ struct mmc_platform_data {
 	unsigned int ocr_mask;			/* available voltages */
 	u32 (*translate_vdd)(struct device *, unsigned int);
 	unsigned int (*status)(struct device *);
-        unsigned int status_irq;
-        struct embedded_sdio_data *embedded_sdio;
-        unsigned int sdiowakeup_irq;
+	struct embedded_sdio_data *embedded_sdio;
 	int (*register_status_notify)(void (*callback)(int card_present, void *dev_id), void *dev_id);
-        unsigned long irq_flags;
-        unsigned long mmc_bus_width;
-        int (*wpswitch) (struct device *);
-	int dummy52_required;
-	unsigned int msmsdcc_fmin;
-	unsigned int msmsdcc_fmid;
-	unsigned int msmsdcc_fmax;
-	bool nonremovable;
 };
 
 #endif
