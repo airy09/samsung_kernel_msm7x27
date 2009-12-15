@@ -13,23 +13,26 @@
  *
  */
 
+#ifndef _LINUX_TPA2018D1_H
+#define _LINUX_TPA2018D1_H
 
-#ifndef __ASM_ARM_ARCH_TPA2018D1_H
-#define __ASM_ARM_ARCH_TPA2018D1_H
+#include <linux/ioctl.h>
+
+#ifdef __KERNEL__
 
 #define TPA2018D1_I2C_NAME "tpa2018d1"
-#define TPA2018D1_CMD_LEN 8
 
 struct tpa2018d1_platform_data {
 	uint32_t gpio_tpa2018_spk_en;
 };
 
-struct tpa2018d1_config_data {
-	unsigned char *cmd_data;  /* [mode][cmd_len][cmds..] */
-	unsigned int mode_num;
-	unsigned int data_len;
-};
+#endif /* __KERNEL__ */
+
+#define TPA2018_IOCTL_MAGIC	'a'
+#define TPA2018_SET_CONFIG	_IOW(TPA2018_IOCTL_MAGIC, 0x01, unsigned)
+#define TPA2018_READ_CONFIG	_IOR(TPA2018_IOCTL_MAGIC, 0x02, unsigned)
 
 extern void tpa2018d1_set_speaker_amp(int on);
 
-#endif /* __ASM_ARM_ARCH_TPA2018D1_H */
+#endif
+
