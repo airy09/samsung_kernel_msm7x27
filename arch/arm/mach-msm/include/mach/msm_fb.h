@@ -21,10 +21,6 @@
 
 struct mddi_info;
 
-/* output interface format */
-#define MSM_MDP_OUT_IF_FMT_RGB565 0
-#define MSM_MDP_OUT_IF_FMT_RGB666 1
-
 struct msm_fb_data {
 	int xres;	/* x resolution in pixels */
 	int yres;	/* y resolution in pixels */
@@ -91,8 +87,6 @@ struct msm_mddi_platform_data {
 
 	/* fixup the mfr name, product id */
 	void (*fixup)(uint16_t *mfr_name, uint16_t *product_id);
-
-	int vsync_irq;
 
 	struct resource *fb_resource; /*optional*/
 	/* number of clients in the list that follows */
@@ -161,6 +155,7 @@ struct mdp_device {
 	int (*blit)(struct mdp_device *mdp, struct fb_info *fb,
 		    struct mdp_blit_req *req);
 	void (*set_grp_disp)(struct mdp_device *mdp, uint32_t disp_id);
+	void (*configure_dma)(struct mdp_device *mdp);
 	int (*check_output_format)(struct mdp_device *mdp, int bpp);
 	int (*set_output_format)(struct mdp_device *mdp, int bpp);
 };
@@ -182,17 +177,8 @@ struct msm_mddi_bridge_platform_data {
 	int (*unblank)(struct msm_mddi_bridge_platform_data *,
 		       struct msm_mddi_client_data *);
 	struct msm_fb_data fb_data;
-
-	/* board file will identify what capabilities the panel supports */
-	uint32_t panel_caps;
 };
 
 
-struct mdp_v4l2_req;
-int msm_fb_v4l2_enable(struct mdp_overlay *req, bool enable, void **par);
-int msm_fb_v4l2_update(void *par,
-	unsigned long srcp0_addr, unsigned long srcp0_size,
-	unsigned long srcp1_addr, unsigned long srcp1_size,
-	unsigned long srcp2_addr, unsigned long srcp2_size);
 
 #endif
