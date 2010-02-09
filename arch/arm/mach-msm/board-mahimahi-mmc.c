@@ -56,21 +56,21 @@ static void config_gpio_table(uint32_t *table, int len)
 }
 
 static uint32_t sdcard_on_gpio_table[] = {
-	PCOM_GPIO_CFG(62, 1, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA), /* CLK */
-	PCOM_GPIO_CFG(63, 1, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_8MA), /* CMD */
-	PCOM_GPIO_CFG(64, 1, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_4MA), /* DAT3 */
-	PCOM_GPIO_CFG(65, 1, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_4MA), /* DAT2 */
-	PCOM_GPIO_CFG(66, 1, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_4MA), /* DAT1 */
-	PCOM_GPIO_CFG(67, 1, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_4MA), /* DAT0 */
+	PCOM_GPIO_CFG(62, 1, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_8MA), /* CLK */
+	PCOM_GPIO_CFG(63, 1, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_8MA), /* CMD */
+	PCOM_GPIO_CFG(64, 1, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_4MA), /* DAT3 */
+	PCOM_GPIO_CFG(65, 1, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_4MA), /* DAT2 */
+	PCOM_GPIO_CFG(66, 1, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_4MA), /* DAT1 */
+	PCOM_GPIO_CFG(67, 1, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_4MA), /* DAT0 */
 };
 
 static uint32_t sdcard_off_gpio_table[] = {
-	PCOM_GPIO_CFG(62, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* CLK */
-	PCOM_GPIO_CFG(63, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* CMD */
-	PCOM_GPIO_CFG(64, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT3 */
-	PCOM_GPIO_CFG(65, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT2 */
-	PCOM_GPIO_CFG(66, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT1 */
-	PCOM_GPIO_CFG(67, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT0 */
+	PCOM_GPIO_CFG(62, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* CLK */
+	PCOM_GPIO_CFG(63, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* CMD */
+	PCOM_GPIO_CFG(64, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT3 */
+	PCOM_GPIO_CFG(65, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT2 */
+	PCOM_GPIO_CFG(66, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT1 */
+	PCOM_GPIO_CFG(67, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT0 */
 };
 
 static struct vreg	*sdslot_vreg;
@@ -134,32 +134,6 @@ static uint32_t mahimahi_sdslot_switchvdd(struct device *dev, unsigned int vdd)
 	return 0;
 }
 
-static uint32_t mahimahi_cdma_sdslot_switchvdd(struct device *dev, unsigned int vdd)
-{
-	if (!vdd == !sdslot_vdd)
-		return 0;
-
-	/* In CDMA version, the vdd of sdslot is not configurable, and it is
-	 * fixed in 2.85V by hardware design.
-	 */
-
-	sdslot_vdd = vdd ? MMC_VDD_28_29 : 0;
-
-	if (vdd) {
-		gpio_set_value(MAHIMAHI_CDMA_SD_2V85_EN, 1);
-		config_gpio_table(sdcard_on_gpio_table,
-				  ARRAY_SIZE(sdcard_on_gpio_table));
-	} else {
-		config_gpio_table(sdcard_off_gpio_table,
-				  ARRAY_SIZE(sdcard_off_gpio_table));
-		gpio_set_value(MAHIMAHI_CDMA_SD_2V85_EN, 0);
-	}
-
-	sdslot_vreg_enabled = !!vdd;
-
-	return 0;
-}
-
 static unsigned int mahimahi_sdslot_status_rev0(struct device *dev)
 {
 	return !gpio_get_value(MAHIMAHI_GPIO_SDMC_CD_REV0_N);
@@ -183,23 +157,23 @@ static struct mmc_platform_data mahimahi_sdslot_data = {
 };
 
 static uint32_t wifi_on_gpio_table[] = {
-	PCOM_GPIO_CFG(51, 1, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_4MA), /* DAT3 */
-	PCOM_GPIO_CFG(52, 1, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_4MA), /* DAT2 */
-	PCOM_GPIO_CFG(53, 1, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_4MA), /* DAT1 */
-	PCOM_GPIO_CFG(54, 1, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_4MA), /* DAT0 */
-	PCOM_GPIO_CFG(55, 1, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_8MA), /* CMD */
-	PCOM_GPIO_CFG(56, 1, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA), /* CLK */
-	PCOM_GPIO_CFG(152, 0, GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA),  /* WLAN IRQ */
+	PCOM_GPIO_CFG(51, 1, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_4MA), /* DAT3 */
+	PCOM_GPIO_CFG(52, 1, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_4MA), /* DAT2 */
+	PCOM_GPIO_CFG(53, 1, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_4MA), /* DAT1 */
+	PCOM_GPIO_CFG(54, 1, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_4MA), /* DAT0 */
+	PCOM_GPIO_CFG(55, 1, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_8MA), /* CMD */
+	PCOM_GPIO_CFG(56, 1, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_8MA), /* CLK */
+	PCOM_GPIO_CFG(152, 0, GPIO_INPUT, GPIO_NO_PULL, GPIO_4MA),  /* WLAN IRQ */
 };
 
 static uint32_t wifi_off_gpio_table[] = {
-	PCOM_GPIO_CFG(51, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT3 */
-	PCOM_GPIO_CFG(52, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT2 */
-	PCOM_GPIO_CFG(53, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT1 */
-	PCOM_GPIO_CFG(54, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* DAT0 */
-	PCOM_GPIO_CFG(55, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* CMD */
-	PCOM_GPIO_CFG(56, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA), /* CLK */
-	PCOM_GPIO_CFG(152, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA),  /* WLAN IRQ */
+	PCOM_GPIO_CFG(51, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT3 */
+	PCOM_GPIO_CFG(52, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT2 */
+	PCOM_GPIO_CFG(53, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT1 */
+	PCOM_GPIO_CFG(54, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* DAT0 */
+	PCOM_GPIO_CFG(55, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* CMD */
+	PCOM_GPIO_CFG(56, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA), /* CLK */
+	PCOM_GPIO_CFG(152, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_4MA),  /* WLAN IRQ */
 };
 
 /* BCM4329 returns wrong sdio_vsn(1) when we read cccr,
@@ -247,9 +221,9 @@ int mahimahi_wifi_set_carddetect(int val)
 {
 	pr_info("%s: %d\n", __func__, val);
 	mahimahi_wifi_cd = val;
-	if (wifi_status_cb)
+	if (wifi_status_cb) {
 		wifi_status_cb(val, wifi_status_cb_devid);
-	else
+	} else
 		pr_warning("%s: Nobody to notify\n", __func__);
 	return 0;
 }
@@ -296,7 +270,7 @@ int __init mahimahi_init_mmc(unsigned int sys_rev, unsigned debug_uart)
 	printk("%s()+\n", __func__);
 
 	/* initial WIFI_SHUTDOWN# */
-	id = PCOM_GPIO_CFG(MAHIMAHI_GPIO_WIFI_SHUTDOWN_N, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
+	id = PCOM_GPIO_CFG(MAHIMAHI_GPIO_WIFI_SHUTDOWN_N, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_2MA),
 	msm_proc_comm(PCOM_RPC_GPIO_TLMM_CONFIG_EX, &id, 0);
 
 	msm_add_sdcc(1, &mahimahi_wifi_data, 0, 0);
@@ -312,21 +286,9 @@ int __init mahimahi_init_mmc(unsigned int sys_rev, unsigned debug_uart)
 
 	sdslot_vreg_enabled = 0;
 
-	if (is_cdma_version(sys_rev)) {
-		/* In the CDMA version, sdslot is supplied by a gpio. */
-		int rc = gpio_request(MAHIMAHI_CDMA_SD_2V85_EN, "sdslot_en");
-		if (rc < 0) {
-			pr_err("%s: gpio_request(%d) failed: %d\n", __func__,
-				MAHIMAHI_CDMA_SD_2V85_EN, rc);
-			return rc;
-		}
-		mahimahi_sdslot_data.translate_vdd = mahimahi_cdma_sdslot_switchvdd;
-	} else {
-		/* in UMTS version, sdslot is supplied by pmic */
-		sdslot_vreg = vreg_get(0, "gp6");
-		if (IS_ERR(sdslot_vreg))
-			return PTR_ERR(sdslot_vreg);
-	}
+	sdslot_vreg = vreg_get(0, "gp6");
+	if (IS_ERR(sdslot_vreg))
+		return PTR_ERR(sdslot_vreg);
 
 	if (system_rev > 0)
 		msm_add_sdcc(2, &mahimahi_sdslot_data, 0, 0);

@@ -16,7 +16,6 @@
  */
 
 #include <linux/gpio_event.h>
-#include <linux/gpio.h>
 #include <linux/input.h>
 #include <linux/interrupt.h>
 #include <linux/keyreset.h>
@@ -51,19 +50,6 @@ static const unsigned short mahimahi_keymap[KEYMAP_SIZE] = {
 	[KEYMAP_INDEX(1, 1)] = MATRIX_KEY(1, BTN_MOUSE),
 };
 
-static const unsigned short mahimahi_cdma_keymap[KEYMAP_SIZE] = {
-	[KEYMAP_INDEX(0, 0)] = KEY_VOLUMEUP,
-	[KEYMAP_INDEX(0, 1)] = KEY_VOLUMEDOWN,
-	[KEYMAP_INDEX(1, 1)] = MATRIX_KEY(1, BTN_MOUSE),
-
-	/* Key (2, 2) is not a physical key on mahimahi. The purpose of
-	 * registering the unused matrix key as a dummy <end> key is to make
-	 * userland able to send/receive the key event for some requested tests
-	 * in lab. of some CDMA carriers (e.g. Verizon).
-	 */
-	[KEYMAP_INDEX(2, 2)] = KEY_END,
-};
-
 static struct gpio_event_matrix_info mahimahi_keypad_matrix_info = {
 	.info.func = gpio_event_matrix_func,
 	.keymap = mahimahi_keymap,
@@ -88,7 +74,6 @@ static struct gpio_event_direct_entry mahimahi_keypad_key_map[] = {
 static struct gpio_event_input_info mahimahi_keypad_key_info = {
 	.info.func = gpio_event_input_func,
 	.info.no_suspend = true,
-	.debounce_time.tv.nsec = 5 * NSEC_PER_MSEC,
 	.flags = 0,
 	.type = EV_KEY,
 	.keymap = mahimahi_keypad_key_map,
@@ -125,19 +110,6 @@ static int jogball_power(const struct gpio_event_platform_data *pdata, bool on)
 		jog_on_jiffies = jiffies;
 	} else {
 		vreg_disable(jog_vreg);
-	}
-
-	return 0;
-}
-
-static int jogball_power_cdma(const struct gpio_event_platform_data *pdata, bool on)
-{
-	if (on) {
-		gpio_set_value(MAHIMAHI_CDMA_JOG_2V6_EN, 1);
-		jog_just_on = 1;
-		jog_on_jiffies = jiffies;
-	} else {
-		gpio_set_value(MAHIMAHI_CDMA_JOG_2V6_EN, 0);
 	}
 
 	return 0;
@@ -238,22 +210,9 @@ static int __init mahimahi_init_keypad_jogball(void)
 	if (ret != 0)
 		return ret;
 
-	if (is_cdma_version(system_rev)) {
-		mahimahi_keypad_matrix_info.keymap = mahimahi_cdma_keymap;
-		/* In the CDMA version, jogball power is supplied by a gpio. */
-		ret = gpio_request(MAHIMAHI_CDMA_JOG_2V6_EN, "jog_en");
-		if (ret < 0) {
-			pr_err("%s: gpio_request(%d) failed: %d\n", __func__,
-				MAHIMAHI_CDMA_JOG_2V6_EN, ret);
-			return ret;
-		}
-		mahimahi_input_data.power = jogball_power_cdma;
-	} else {
-		/* in UMTS version, jogball power is supplied by pmic */
-		jog_vreg = vreg_get(&mahimahi_input_device.dev, "gp2");
-		if (jog_vreg == NULL)
-			return -ENOENT;
-	}
+	jog_vreg = vreg_get(&mahimahi_input_device.dev, "gp2");
+	if (jog_vreg == NULL)
+		return -ENOENT;
 
 	ret = platform_device_register(&mahimahi_input_device);
 	if (ret != 0)

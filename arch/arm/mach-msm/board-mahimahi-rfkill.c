@@ -29,10 +29,10 @@ static const char bt_name[] = "bcm4329";
 static int bluetooth_set_power(void *data, bool blocked)
 {
 	if (!blocked) {
-		gpio_direction_output(MAHIMAHI_GPIO_BT_RESET_N, 1);
+ 		gpio_direction_output(MAHIMAHI_GPIO_BT_RESET_N, 1);
 		gpio_direction_output(MAHIMAHI_GPIO_BT_SHUTDOWN_N, 1);
 	} else {
-		gpio_direction_output(MAHIMAHI_GPIO_BT_SHUTDOWN_N, 0);
+ 		gpio_direction_output(MAHIMAHI_GPIO_BT_SHUTDOWN_N, 0);
 		gpio_direction_output(MAHIMAHI_GPIO_BT_RESET_N, 0);
 	}
 	return 0;
@@ -63,7 +63,7 @@ static int mahimahi_rfkill_probe(struct platform_device *pdev)
 		goto err_rfkill_alloc;
 	}
 
-	rfkill_set_states(bt_rfk, default_state, false);
+	rfkill_set_states(bt_rfk, default_state, default_state);
 
 	/* userspace cannot take exclusive control */
 
