@@ -14,19 +14,18 @@
  *
  */
 
-#include <linux/slab.h>
 #include <linux/fs.h>
 #include <linux/module.h>
 #include <linux/miscdevice.h>
 #include <linux/mutex.h>
 #include <linux/sched.h>
+#include <linux/slab.h>
 #include <linux/wait.h>
 #include <linux/uaccess.h>
 
 #include <linux/msm_audio.h>
 
 #include <mach/msm_qdsp6_audio.h>
-#include <mach/debug_mm.h>
 
 #define BUFSZ (8192)
 #define DMASZ (BUFSZ * 2)
@@ -67,8 +66,7 @@ static long mp3_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		if (arg == 0) {
 			acdb_id = 0;
 		} else if (copy_from_user(&acdb_id, (void*) arg, sizeof(acdb_id))) {
-			pr_info("[%s:%s] copy acdb_id from user failed\n",
-					__MM_FILE__, __func__);
+			pr_info("pcm_out: copy acdb_id from user failed\n");
 			rc = -EFAULT;
 			break;
 		}
@@ -183,7 +181,7 @@ static ssize_t mp3_write(struct file *file, const char __user *buf,
 	return buf - start;
 }
 
-static int mp3_fsync(struct file *f, int datasync)
+static int mp3_fsync(struct file *f, struct dentry *dentry, int datasync)
 {
 	struct mp3 *mp3 = f->private_data;
 	if (mp3->ac)
