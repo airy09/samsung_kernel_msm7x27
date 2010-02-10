@@ -1,19 +1,5 @@
-/* Copyright (c) 2009, Code Aurora Forum. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
+/*
+ * Copyright (C) 2009 QUALCOMM Incorporated.
  */
 
 #include "mt9t013.h"
@@ -23,7 +9,7 @@ struct reg_struct const mt9t013_reg_pat[2] = {
 	{ /* Preview 2x2 binning 20fps, pclk MHz, MCLK 24MHz */
 	/* vt_pix_clk_div:REG=0x0300 update get_snapshot_fps
 	* if this change */
-	8,
+	10,
 
 	/* vt_sys_clk_div: REG=0x0302  update get_snapshot_fps
 	* if this change */
@@ -31,15 +17,15 @@ struct reg_struct const mt9t013_reg_pat[2] = {
 
 	/* pre_pll_clk_div REG=0x0304  update get_snapshot_fps
 	* if this change */
-	2,
+	3,
 
 	/* pll_multiplier  REG=0x0306 60 for 30fps preview, 40
 	 * for 20fps preview
 	 * 46 for 30fps preview, try 47/48 to increase further */
-	46,
+	80,
 
 	/* op_pix_clk_div        REG=0x0308 */
-	8,
+	10,
 
 	/* op_sys_clk_div        REG=0x030A */
 	1,
@@ -72,10 +58,10 @@ struct reg_struct const mt9t013_reg_pat[2] = {
 	768,
 
 	/* line_length_pck    REG=0x300C */
-	2616,
+	3540,
 
 	/* frame_length_lines REG=0x300A */
-	916,
+	861,
 
 	/* coarse_int_time REG=0x3012 */
 	16,
@@ -83,10 +69,11 @@ struct reg_struct const mt9t013_reg_pat[2] = {
 	/* fine_int_time   REG=0x3014 */
 	1461
 	},
+
 	{ /*Snapshot */
 	/* vt_pix_clk_div  REG=0x0300 update get_snapshot_fps
 	* if this change */
-	8,
+	10,
 
 	/* vt_sys_clk_div  REG=0x0302 update get_snapshot_fps
 	* if this change */
@@ -94,15 +81,15 @@ struct reg_struct const mt9t013_reg_pat[2] = {
 
 	/* pre_pll_clk_div REG=0x0304 update get_snapshot_fps
 	 * if this change */
-	2,
+	3,
 
 	/* pll_multiplier REG=0x0306 50 for 15fps snapshot,
 	 * 40 for 10fps snapshot
 	 * 46 for 30fps snapshot, try 47/48 to increase further */
-	46,
+	80,
 
 	/* op_pix_clk_div        REG=0x0308 */
-	8,
+	10,
 
 	/* op_sys_clk_div        REG=0x030A */
 	1,
@@ -117,7 +104,7 @@ struct reg_struct const mt9t013_reg_pat[2] = {
 	8,
 
 	/* x_addr_end    REG=0x3008 */
-	2071,
+	2063,
 
 	/* y_addr_start  REG=0x3002 */
 	8,
@@ -135,7 +122,7 @@ struct reg_struct const mt9t013_reg_pat[2] = {
 	1544,
 
 	/* line_length_pck REG=0x300C */
-	2952,
+	4800,
 
 	/* frame_length_lines    REG=0x300A */
 	1629,
@@ -148,7 +135,7 @@ struct reg_struct const mt9t013_reg_pat[2] = {
 	}
 };
 
-struct mt9t013_i2c_reg_conf const mt9t013_test_tbl[] = {
+struct mt9t013_i2c_reg_conf mt9t013_test_tbl[] = {
 	{ 0x3044, 0x0544 & 0xFBFF },
 	{ 0x30CA, 0x0004 | 0x0001 },
 	{ 0x30D4, 0x9020 & 0x7FFF },
@@ -160,7 +147,7 @@ struct mt9t013_i2c_reg_conf const mt9t013_test_tbl[] = {
 };
 
 /* [Lens shading 85 Percent TL84] */
-struct mt9t013_i2c_reg_conf const mt9t013_lc_tbl[] = {
+struct mt9t013_i2c_reg_conf mt9t013_lc_tbl[] = {
 	{ 0x360A, 0x0290 }, /* P_RD_P0Q0 */
 	{ 0x360C, 0xC92D }, /* P_RD_P0Q1 */
 	{ 0x360E, 0x0771 }, /* P_RD_P0Q2 */

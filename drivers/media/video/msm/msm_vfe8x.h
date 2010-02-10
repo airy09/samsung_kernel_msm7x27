@@ -1,21 +1,6 @@
-/* Copyright (c) 2009, Code Aurora Forum. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
+/*
+ * Copyright (C) 2008-2009 QUALCOMM Incorporated.
  */
-
 #ifndef __MSM_VFE8X_H__
 #define __MSM_VFE8X_H__
 
@@ -804,10 +789,8 @@ enum VFE_MESSAGE_ID {
 	VFE_MSG_ID_START_ACK,
 	VFE_MSG_ID_STOP_ACK,
 	VFE_MSG_ID_UPDATE_ACK,
-	VFE_MSG_ID_OUTPUT_P,
-	VFE_MSG_ID_OUTPUT_V,
-	VFE_MSG_ID_OUTPUT_S,
-	VFE_MSG_ID_OUTPUT_T,
+	VFE_MSG_ID_OUTPUT1,
+	VFE_MSG_ID_OUTPUT2,
 	VFE_MSG_ID_SNAPSHOT_DONE,
 	VFE_MSG_ID_STATS_AUTOFOCUS,
 	VFE_MSG_ID_STATS_WB_EXP,
@@ -827,7 +810,6 @@ enum VFE_MESSAGE_ID {
 	VFE_MSG_ID_VIOLATION,
 	VFE_MSG_ID_CAMIF_ERROR,
 	VFE_MSG_ID_BUS_OVERFLOW,
-	VFE_MSG_ID_SOF_ACK,
 };
 
 struct vfe_msg_stats_autofocus {
@@ -899,7 +881,7 @@ struct vfe_message {
 
 /* New one for 8k */
 struct msm_vfe_command_8k {
-	int id;
+	int32_t  id;
 	uint16_t length;
 	void     *value;
 };

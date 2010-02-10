@@ -1,19 +1,5 @@
-/* Copyright (c) 2009, Code Aurora Forum. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
+/*
+ * Copyright (c) 2008-2009 QUALCOMM Incorporated
  */
 
 #include <linux/delay.h>
@@ -22,7 +8,6 @@
 #include <mach/gpio.h>
 #include <mach/board.h>
 #include <mach/camera.h>
-#include <mach/clk.h>
 
 #define CAMIF_CFG_RMSK 0x1fffff
 #define CAM_SEL_BMSK 0x2
@@ -52,8 +37,11 @@ static struct msm_camera_io_ext camio_ext;
 static struct resource *appio, *mdcio;
 void __iomem *appbase, *mdcbase;
 
+static struct msm_camera_io_ext camio_ext;
 static struct resource *appio, *mdcio;
 void __iomem *appbase, *mdcbase;
+
+extern int clk_set_flags(struct clk *clk, unsigned long flags);
 
 int msm_camio_clk_enable(enum msm_camio_clk_type clktype)
 {
@@ -146,60 +134,52 @@ int msm_camio_enable(struct platform_device *pdev)
 		goto apps_no_mem;
 	}
 
+	mdcio = request_mem_region(camio_ext.mdcphy,
+		camio_ext.mdcsz, pdev->name);
+	if (!mdcio) {
+		rc = -EBUSY;
+		goto mdc_busy;
+	}
+
+	mdcbase = ioremap(camio_ext.mdcphy,
+		camio_ext.mdcsz);
+	if (!mdcbase) {
+		rc = -ENOMEM;
+		goto mdc_no_mem;
+	}
+
+	camdev->camera_gpio_on();
+
 	msm_camio_clk_enable(CAMIO_VFE_CLK);
 	msm_camio_clk_enable(CAMIO_MDC_CLK);
+	msm_camio_clk_enable(CAMIO_VFE_MDC_CLK);
 	return 0;
+
+mdc_no_mem:
+	release_mem_region(camio_ext.mdcphy, camio_ext.mdcsz);
+mdc_busy:
+	iounmap(appbase);
 apps_no_mem:
 	release_mem_region(camio_ext.appphy, camio_ext.appsz);
 enable_fail:
 	return rc;
 }
 
-int msm_camio_sensor_clk_on(struct platform_device *pdev)
-{
-	struct msm_camera_sensor_info *sinfo = pdev->dev.platform_data;
-	struct msm_camera_device_platform_data *camdev = sinfo->pdata;
-	int32_t rc = 0;
-	camio_ext = camdev->ioext;
-	mdcio = request_mem_region(camio_ext.mdcphy,
-		camio_ext.mdcsz, pdev->name);
-	if (!mdcio)
-		rc = -EBUSY;
-	mdcbase = ioremap(camio_ext.mdcphy,
-		camio_ext.mdcsz);
-	if (!mdcbase) {
-		rc = -EINVAL;
-		goto mdc_no_mem;
-	}
-	camdev->camera_gpio_on();
-	return msm_camio_clk_enable(CAMIO_VFE_MDC_CLK);
-
-mdc_no_mem:
-	release_mem_region(camio_ext.mdcphy, camio_ext.mdcsz);
-	return rc;
-}
-
-int msm_camio_sensor_clk_off(struct platform_device *pdev)
-{
-	struct msm_camera_sensor_info *sinfo = pdev->dev.platform_data;
-	struct msm_camera_device_platform_data *camdev = sinfo->pdata;
-	camdev->camera_gpio_off();
-	iounmap(mdcbase);
-	release_mem_region(camio_ext.mdcphy, camio_ext.mdcsz);
-	return msm_camio_clk_disable(CAMIO_VFE_MDC_CLK);
-}
-
 void msm_camio_disable(struct platform_device *pdev)
 {
+	struct msm_camera_sensor_info *sinfo = pdev->dev.platform_data;
+	struct msm_camera_device_platform_data *camdev = sinfo->pdata;
+
+	iounmap(mdcbase);
+	release_mem_region(camio_ext.mdcphy, camio_ext.mdcsz);
 	iounmap(appbase);
 	release_mem_region(camio_ext.appphy, camio_ext.appsz);
+
+	camdev->camera_gpio_off();
+
 	msm_camio_clk_disable(CAMIO_VFE_CLK);
 	msm_camio_clk_disable(CAMIO_MDC_CLK);
-}
-
-void msm_disable_io_gpio_clk(struct platform_device *pdev)
-{
-	return;
+	msm_camio_clk_disable(CAMIO_VFE_MDC_CLK);
 }
 
 void msm_camio_camif_pad_reg_reset(void)
@@ -221,29 +201,28 @@ void msm_camio_camif_pad_reg_reset(void)
 		0 << CAM_PCLK_INVERT_SHFT;
 
 	writel((reg & (~mask)) | (value & mask), mdcbase);
-	msleep(10);
+	mdelay(10);
 
 	reg = (readl(mdcbase)) & CAMIF_CFG_RMSK;
 	mask = CAM_PAD_REG_SW_RESET_BMSK;
 	value = 1 << CAM_PAD_REG_SW_RESET_SHFT;
 	writel((reg & (~mask)) | (value & mask), mdcbase);
-	msleep(10);
+	mdelay(10);
 
 	reg = (readl(mdcbase)) & CAMIF_CFG_RMSK;
 	mask = CAM_PAD_REG_SW_RESET_BMSK;
 	value = 0 << CAM_PAD_REG_SW_RESET_SHFT;
 	writel((reg & (~mask)) | (value & mask), mdcbase);
-	msleep(10);
+	mdelay(10);
 
 	msm_camio_clk_sel(MSM_CAMIO_CLK_SRC_EXTERNAL);
-	msleep(10);
+	mdelay(10);
 }
 
 void msm_camio_vfe_blk_reset(void)
 {
 	uint32_t val;
 
-	/* do apps reset */
 	val = readl(appbase + 0x00000210);
 	val |= 0x1;
 	writel(val, appbase + 0x00000210);
@@ -252,17 +231,6 @@ void msm_camio_vfe_blk_reset(void)
 	val = readl(appbase + 0x00000210);
 	val &= ~0x1;
 	writel(val, appbase + 0x00000210);
-	mdelay(10);
-
-	/* do axi reset */
-	val = readl(appbase + 0x00000208);
-	val |= 0x1;
-	writel(val, appbase + 0x00000208);
-	mdelay(10);
-
-	val = readl(appbase + 0x00000208);
-	val &= ~0x1;
-	writel(val, appbase + 0x00000208);
 	mdelay(10);
 }
 

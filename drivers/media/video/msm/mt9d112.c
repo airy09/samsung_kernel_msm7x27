@@ -1,22 +1,7 @@
-/* Copyright (c) 2009, Code Aurora Forum. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
+/*
+ * Copyright (C) 2008-2009 QUALCOMM Incorporated.
  */
 
-#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/types.h>
 #include <linux/i2c.h>
@@ -36,8 +21,6 @@
 #define  REG_MT9D112_STANDBY_CONTROL  0x3202
 #define  REG_MT9D112_MCU_BOOT         0x3386
 
-#define SENSOR_DEBUG 0
-
 struct mt9d112_work {
 	struct work_struct work;
 };
@@ -54,7 +37,7 @@ static struct mt9d112_ctrl *mt9d112_ctrl;
 
 static DECLARE_WAIT_QUEUE_HEAD(mt9d112_wait_queue);
 DECLARE_MUTEX(mt9d112_sem);
-static int16_t mt9d112_effect = CAMERA_EFFECT_OFF;
+
 
 /*=============================================================
 	EXTERNAL DECLARATIONS
@@ -92,15 +75,6 @@ static int32_t mt9d112_i2c_txdata(unsigned short saddr,
 		},
 	};
 
-#if SENSOR_DEBUG
-	if (length == 2)
-		CDBG("msm_io_i2c_w: 0x%04x 0x%04x\n",
-			*(u16 *) txdata, *(u16 *) (txdata + 2));
-	else if (length == 4)
-		CDBG("msm_io_i2c_w: 0x%04x\n", *(u16 *) txdata);
-	else
-		CDBG("msm_io_i2c_w: length = %d\n", length);
-#endif
 	if (i2c_transfer(mt9d112_client->adapter, msg, 1) < 0) {
 		CDBG("mt9d112_i2c_txdata failed\n");
 		return -EIO;
@@ -184,16 +158,6 @@ static int mt9d112_i2c_rxdata(unsigned short saddr,
 		.buf   = rxdata,
 	},
 	};
-
-#if SENSOR_DEBUG
-	if (length == 2)
-		CDBG("msm_io_i2c_r: 0x%04x 0x%04x\n",
-			*(u16 *) rxdata, *(u16 *) (rxdata + 2));
-	else if (length == 4)
-		CDBG("msm_io_i2c_r: 0x%04x\n", *(u16 *) rxdata);
-	else
-		CDBG("msm_io_i2c_r: length = %d\n", length);
-#endif
 
 	if (i2c_transfer(mt9d112_client->adapter, msgs, 2) < 0) {
 		CDBG("mt9d112_i2c_rxdata failed!\n");
@@ -306,6 +270,114 @@ static long mt9d112_reg_init(void)
 	return 0;
 }
 
+static long mt9d112_set_sensor_mode(int mode)
+{
+	uint16_t clock;
+	long rc = 0;
+
+	switch (mode) {
+	case SENSOR_PREVIEW_MODE:
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x338C, 0xA20C, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x3390, 0x0004, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x338C, 0xA215, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x3390, 0x0004, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x338C, 0xA20B, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x3390, 0x0000, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		clock = 0x0250;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x341C, clock, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x338C, 0xA103, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x3390, 0x0001, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		mdelay(5);
+		break;
+
+	case SENSOR_SNAPSHOT_MODE:
+		/* Switch to lower fps for Snapshot */
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x341C, 0x0120, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x338C, 0xA120, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x3390, 0x0002, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		mdelay(5);
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x338C, 0xA103, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x3390, 0x0002, WORD_LEN);
+		if (rc < 0)
+			return rc;
+		break;
+
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 static long mt9d112_set_effect(int mode, int effect)
 {
 	uint16_t reg_addr;
@@ -318,7 +390,6 @@ static long mt9d112_set_effect(int mode, int effect)
 		reg_addr = 0x2799;
 		break;
 
-	case SENSOR_RAW_SNAPSHOT_MODE:
 	case SENSOR_SNAPSHOT_MODE:
 		/* Context B Special Effects */
 		reg_addr = 0x279B;
@@ -401,6 +472,11 @@ static long mt9d112_set_effect(int mode, int effect)
 	}
 		break;
 
+	case CAMERA_EFFECT_PASTEL:
+	case CAMERA_EFFECT_MOSAIC:
+	case CAMERA_EFFECT_RESIZE:
+		return -EINVAL;
+
 	default: {
 		reg_val = 0x6440;
 		rc = mt9d112_i2c_write(mt9d112_client->addr,
@@ -416,7 +492,7 @@ static long mt9d112_set_effect(int mode, int effect)
 		return -EINVAL;
 	}
 	}
-	mt9d112_effect = effect;
+
 	/* Refresh Sequencer */
 	rc = mt9d112_i2c_write(mt9d112_client->addr,
 		0x338C, 0xA103, WORD_LEN);
@@ -427,162 +503,6 @@ static long mt9d112_set_effect(int mode, int effect)
 		0x3390, 0x0005, WORD_LEN);
 
 	return rc;
-}
-
-static long mt9d112_set_sensor_mode(int mode)
-{
-	uint16_t clock;
-	long rc = 0;
-
-	switch (mode) {
-	case SENSOR_PREVIEW_MODE:
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x338C, 0xA20C, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x3390, 0x0004, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x338C, 0xA215, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x3390, 0x0004, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x338C, 0xA20B, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x3390, 0x0000, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		clock = 0x23C;
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x341C, clock, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x338C, 0xA103, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x3390, 0x0001, WORD_LEN);
-		if (rc < 0)
-			return rc;
-		mdelay(5);
-
-		break;
-
-	case SENSOR_SNAPSHOT_MODE:
-		/* Switch to lower fps for Snapshot */
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x341C, 0x0120, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x338C, 0xA120, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		msleep(40);/*waiting for the delay of one frame*/
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x3390, 0x0002, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		msleep(80);/*waiting for the delay of two frames*/
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x338C, 0xA103, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		msleep(40);/*waiting for the delay of one frame*/
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x3390, 0x0002, WORD_LEN);
-		if (rc < 0)
-			return rc;
-		break;
-
-	case SENSOR_RAW_SNAPSHOT_MODE:
-		/* Setting the effect to CAMERA_EFFECT_OFF */
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x338C, 0x279B, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-			0x3390, 0x6440, WORD_LEN);
-		if (rc < 0)
-			return rc;
-		msleep(40);/*waiting for the delay of one frame*/
-		/* Switch to lower fps for Snapshot */
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x341C, 0x0120, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x338C, 0xA120, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x3390, 0x0002, WORD_LEN);
-		if (rc < 0)
-			return rc;
-		msleep(80);/*waiting for the delay of two frames frame*/
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x338C, 0xA103, WORD_LEN);
-		if (rc < 0)
-			return rc;
-		msleep(40);/*waiting for the delay of one frame*/
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x3390, 0x0002, WORD_LEN);
-		if (rc < 0)
-			return rc;
-		break;
-
-	default:
-		return -EINVAL;
-	}
-
-	return 0;
 }
 
 static int mt9d112_sensor_init_probe(const struct msm_camera_sensor_info *data)

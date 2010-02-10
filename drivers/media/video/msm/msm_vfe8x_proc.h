@@ -1,19 +1,5 @@
-/* Copyright (c) 2009, Code Aurora Forum. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
+/*
+ * Copyright (C) 2008-2009 QUALCOMM Incorporated.
  */
 
 #ifndef __MSM_VFE8X_REG_H__
@@ -22,12 +8,6 @@
 #include <mach/msm_iomap.h>
 #include <mach/camera.h>
 #include "msm_vfe8x.h"
-
-
-#define MSM_AXI_QOS_PREVIEW		128000
-#define MSM_AXI_QOS_SNAPSHOT	128000
-#define MSM_AXI_QOS_RECORDING	128000
-
 
 /* at start of camif,  bit 1:0 = 0x01:enable
  * image data capture at frame boundary. */
@@ -1557,12 +1537,13 @@ void vfe_stats_start_wb_exp(struct vfe_cmd_stats_wb_exp_start *);
 void vfe_stats_start_af(struct vfe_cmd_stats_af_start *);
 void vfe_stats_setting(struct vfe_cmd_stats_setting *);
 void vfe_axi_input_config(struct vfe_cmd_axi_input_config *);
+void vfe_stats_config(struct vfe_cmd_stats_setting *);
 void vfe_axi_output_config(struct vfe_cmd_axi_output_config *);
 void vfe_camif_config(struct vfe_cmd_camif_config *);
 void vfe_fov_crop_config(struct vfe_cmd_fov_crop_config *);
 void vfe_get_hw_version(struct vfe_cmd_hw_version *);
 void vfe_reset(void);
 void vfe_cmd_release(struct platform_device *);
-void vfe_output_p_ack(struct vfe_cmd_output_ack *);
-void vfe_output_v_ack(struct vfe_cmd_output_ack *);
+void vfe_output1_ack(struct vfe_cmd_output_ack *);
+void vfe_output2_ack(struct vfe_cmd_output_ack *);
 #endif /* __MSM_VFE8X_REG_H__ */

@@ -1,21 +1,6 @@
-/* Copyright (c) 2009-2010, Code Aurora Forum. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
- */
-
+/*
+* Copyright (C) 2008-2009 QUALCOMM Incorporated.
+*/
 #include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
@@ -25,16 +10,6 @@
 #include <linux/platform_device.h>
 #include "msm_vfe8x_proc.h"
 #include <media/msm_camera.h>
-#include <mach/board.h>
-
-struct isr_queue_cmd {
-	struct list_head list;
-	struct vfe_interrupt_status vfeInterruptStatus;
-	struct vfe_frame_asf_info vfeAsfFrameInfo;
-	struct vfe_frame_bpc_info vfeBpcFrameInfo;
-	struct vfe_msg_camif_status vfeCamifStatusLocal;
-	struct vfe_bus_performance_monitor vfePmData;
-};
 
 struct msm_vfe8x_ctrl {
 	/* bit 1:0 ENC_IRQ_MASK = 0x11:
@@ -62,8 +37,6 @@ struct msm_vfe8x_ctrl {
 	enum VFE_AXI_OUTPUT_MODE        axiOutputMode;
 	enum VFE_START_OPERATION_MODE   vfeOperationMode;
 
-	atomic_t vfe_serv_interrupt;
-
 	uint32_t            vfeSnapShotCount;
 	uint32_t            vfeRequestedSnapShotCount;
 	boolean             vfeStatsPingPongReloadFlag;
@@ -88,24 +61,36 @@ struct msm_vfe8x_ctrl {
 
 	enum VFE_STATE  vstate;
 
-	struct msm_vfe_callback *resp;
-	struct vfe_frame_extra extdata;
+	spinlock_t  ack_lock;
+	spinlock_t  state_lock;
+	spinlock_t  io_lock;
 
-	struct isr_queue_cmd irqs[10];
-	spinlock_t irqs_lock;
-	int irq_get;
-	int irq_put;
+	struct msm_vfe_callback *resp;
+	uint32_t extlen;
+	void *extdata;
+
+	spinlock_t  tasklet_lock;
+	struct list_head tasklet_q;
 
 	int vfeirq;
 	void __iomem *vfebase;
 
 	void *syncdata;
 };
-
 static struct msm_vfe8x_ctrl *ctrl;
-static spinlock_t msm_vfe_ctrl_lock;
+static irqreturn_t vfe_parse_irq(int irq_num, void *data);
 
-static void vfe_prog_hw(uint8_t *hwreg, uint32_t *inptr, uint32_t regcnt)
+struct isr_queue_cmd {
+	struct list_head list;
+	struct vfe_interrupt_status        vfeInterruptStatus;
+	struct vfe_frame_asf_info          vfeAsfFrameInfo;
+	struct vfe_frame_bpc_info          vfeBpcFrameInfo;
+	struct vfe_msg_camif_status        vfeCamifStatusLocal;
+	struct vfe_bus_performance_monitor vfePmData;
+};
+
+static void vfe_prog_hw(uint8_t *hwreg,
+	uint32_t *inptr, uint32_t regcnt)
 {
 	/* unsigned long flags; */
 	uint32_t i;
@@ -120,6 +105,41 @@ static void vfe_prog_hw(uint8_t *hwreg, uint32_t *inptr, uint32_t regcnt)
 		/* *p++ = *inptr++; */
 
 	/* spin_unlock_irqrestore(&ctrl->io_lock, flags); */
+}
+
+static void vfe_read_reg_values(uint8_t *hwreg,
+	uint32_t *dest, uint32_t count)
+{
+	/* unsigned long flags; */
+	uint32_t *temp;
+	uint32_t i;
+
+	/* @todo This is causing issues, need further investigate */
+	/* spin_lock_irqsave(&ctrl->io_lock, flags); */
+
+	temp = (uint32_t *)(hwreg);
+	for (i = 0; i < count; i++)
+		*dest++ = *temp++;
+
+	/* spin_unlock_irqrestore(&ctrl->io_lock, flags); */
+}
+
+static struct vfe_irqenable vfe_read_irq_mask(void)
+{
+	/* unsigned long flags; */
+	uint32_t *temp;
+	struct vfe_irqenable rc;
+
+	memset(&rc, 0, sizeof(rc));
+
+	/* @todo This is causing issues, need further investigate */
+	/* spin_lock_irqsave(&ctrl->io_lock, flags); */
+	temp = (uint32_t *)(ctrl->vfebase + VFE_IRQ_MASK);
+
+	rc = *((struct vfe_irqenable *)temp);
+	/* spin_unlock_irqrestore(&ctrl->io_lock, flags); */
+
+	return rc;
 }
 
 static void
@@ -154,7 +174,6 @@ static void vfe_axi_output(struct vfe_cmd_axi_output_config *in,
 	uint16_t temp;
 	uint32_t burstLength;
 
-	memset(&cmd, 0, sizeof(cmd));
 	/* force it to burst length 4, hardware does not support it. */
 	burstLength = 1;
 
@@ -169,13 +188,15 @@ static void vfe_axi_output(struct vfe_cmd_axi_output_config *in,
 	cmd.out2YImageHeight = in->output2.outputY.imageHeight;
 	/* convert the image width and row increment to be in
 	 * unit of 64bit (8 bytes) */
-	temp = (in->output2.outputY.imageWidth + (out - 1)) / out;
+	temp = (in->output2.outputY.imageWidth + (out - 1)) /
+		out;
 	cmd.out2YImageWidthin64bit = temp;
 
 	/* VFE_BUS_ENC_Y_WR_BUFFER_CFG */
 	cmd.out2YBurstLength = burstLength;
 	cmd.out2YNumRows = in->output2.outputY.outRowCount;
-	temp = (in->output2.outputY.outRowIncrement + (out - 1)) / out;
+	temp = (in->output2.outputY.outRowIncrement + (out - 1)) /
+		out;
 	cmd.out2YRowIncrementIn64bit = temp;
 
 	/* AXI Output 2 Cbcr Configuration*/
@@ -187,13 +208,15 @@ static void vfe_axi_output(struct vfe_cmd_axi_output_config *in,
 
 	/* VFE_BUS_ENC_Cbcr_WR_IMAGE_SIZE */
 	cmd.out2CbcrImageHeight = in->output2.outputCbcr.imageHeight;
-	temp = (in->output2.outputCbcr.imageWidth + (out - 1)) / out;
+	temp = (in->output2.outputCbcr.imageWidth + (out - 1)) /
+		out;
 	cmd.out2CbcrImageWidthIn64bit = temp;
 
 	/* VFE_BUS_ENC_Cbcr_WR_BUFFER_CFG */
 	cmd.out2CbcrBurstLength = burstLength;
 	cmd.out2CbcrNumRows = in->output2.outputCbcr.outRowCount;
-	temp = (in->output2.outputCbcr.outRowIncrement + (out - 1)) / out;
+	temp = (in->output2.outputCbcr.outRowIncrement + (out - 1)) /
+		out;
 	cmd.out2CbcrRowIncrementIn64bit = temp;
 
 	/* AXI Output 1 Y Configuration */
@@ -205,30 +228,37 @@ static void vfe_axi_output(struct vfe_cmd_axi_output_config *in,
 
 	/* VFE_BUS_VIEW_Y_WR_IMAGE_SIZE */
 	cmd.out1YImageHeight = in->output1.outputY.imageHeight;
-	temp = (in->output1.outputY.imageWidth + (out - 1)) / out;
+	temp = (in->output1.outputY.imageWidth + (out - 1)) /
+		out;
 	cmd.out1YImageWidthin64bit = temp;
 
 	/* VFE_BUS_VIEW_Y_WR_BUFFER_CFG     */
 	cmd.out1YBurstLength = burstLength;
 	cmd.out1YNumRows = in->output1.outputY.outRowCount;
 
-	temp = (in->output1.outputY.outRowIncrement + (out - 1)) / out;
+	temp =
+		(in->output1.outputY.outRowIncrement +
+		 (out - 1)) / out;
 	cmd.out1YRowIncrementIn64bit = temp;
 
 	/* AXI Output 1 Cbcr Configuration*/
 	cmd.out1CbcrPingAddr = out1->cbcrPath.addressBuffer[0];
 
 	/* VFE_BUS_VIEW_Cbcr_WR_PONG_ADDR  */
-	cmd.out1CbcrPongAddr = out1->cbcrPath.addressBuffer[1];
+	cmd.out1CbcrPongAddr =
+		out1->cbcrPath.addressBuffer[1];
 
 	/* VFE_BUS_VIEW_Cbcr_WR_IMAGE_SIZE */
 	cmd.out1CbcrImageHeight = in->output1.outputCbcr.imageHeight;
-	temp = (in->output1.outputCbcr.imageWidth + (out - 1)) / out;
+	temp = (in->output1.outputCbcr.imageWidth +
+		(out - 1)) / out;
 	cmd.out1CbcrImageWidthIn64bit = temp;
 
 	cmd.out1CbcrBurstLength = burstLength;
 	cmd.out1CbcrNumRows = in->output1.outputCbcr.outRowCount;
-	temp = (in->output1.outputCbcr.outRowIncrement + (out - 1)) / out;
+	temp =
+		(in->output1.outputCbcr.outRowIncrement +
+		 (out - 1)) / out;
 
 	cmd.out1CbcrRowIncrementIn64bit = temp;
 
@@ -240,7 +270,6 @@ static void vfe_reg_bus_cfg(struct vfe_bus_cfg_data *in)
 {
 	struct vfe_axi_bus_cfg cmd;
 
-	memset(&cmd, 0, sizeof(cmd));
 	cmd.stripeRdPathEn      = in->stripeRdPathEn;
 	cmd.encYWrPathEn        = in->encYWrPathEn;
 	cmd.encCbcrWrPathEn     = in->encCbcrWrPathEn;
@@ -259,25 +288,35 @@ static void vfe_reg_camif_config(struct vfe_camif_cfg_data *in)
 
 	memset(&cfg, 0, sizeof(cfg));
 
-	cfg.VSyncEdge = in->camifCfgFromCmd.vSyncEdge;
+	cfg.VSyncEdge          =
+		in->camifCfgFromCmd.vSyncEdge;
 
-	cfg.HSyncEdge = in->camifCfgFromCmd.hSyncEdge;
+	cfg.HSyncEdge          =
+		in->camifCfgFromCmd.hSyncEdge;
 
-	cfg.syncMode = in->camifCfgFromCmd.syncMode;
+	cfg.syncMode           =
+		in->camifCfgFromCmd.syncMode;
 
-	cfg.vfeSubsampleEnable = in->camifCfgFromCmd.vfeSubSampleEnable;
+	cfg.vfeSubsampleEnable =
+		in->camifCfgFromCmd.vfeSubSampleEnable;
 
-	cfg.busSubsampleEnable = in->camifCfgFromCmd.busSubSampleEnable;
+	cfg.busSubsampleEnable =
+		in->camifCfgFromCmd.busSubSampleEnable;
 
-	cfg.camif2vfeEnable = in->camif2OutputEnable;
+	cfg.camif2vfeEnable    =
+		in->camif2OutputEnable;
 
-	cfg.camif2busEnable = in->camif2BusEnable;
+	cfg.camif2busEnable    =
+		in->camif2BusEnable;
 
-	cfg.irqSubsampleEnable = in->camifCfgFromCmd.irqSubSampleEnable;
+	cfg.irqSubsampleEnable =
+		in->camifCfgFromCmd.irqSubSampleEnable;
 
-	cfg.binningEnable = in->camifCfgFromCmd.binningEnable;
+	cfg.binningEnable      =
+		in->camifCfgFromCmd.binningEnable;
 
-	cfg.misrEnable = in->camifCfgFromCmd.misrEnable;
+	cfg.misrEnable         =
+		in->camifCfgFromCmd.misrEnable;
 
 	/*  program camif_config */
 	writel(*((uint32_t *)&cfg), ctrl->vfebase + CAMIF_CONFIG);
@@ -345,7 +384,8 @@ static void vfe_program_dmi_cfg(enum VFE_DMI_RAM_SEL bankSel)
 	writel(0, ctrl->vfebase + VFE_DMI_ADDR);
 }
 
-static void vfe_write_lens_roll_off_table(struct vfe_cmd_roll_off_config *in)
+static void vfe_write_lens_roll_off_table(
+	struct vfe_cmd_roll_off_config *in)
 {
 	uint16_t i;
 	uint32_t data;
@@ -372,7 +412,7 @@ static void vfe_write_lens_roll_off_table(struct vfe_cmd_roll_off_config *in)
 		writel(data, ctrl->vfebase + VFE_DMI_DATA_LO);
 
 		data = (((uint32_t)(*initB)) & 0x0000FFFF) |
-			(((uint32_t)(*initGb))<<16);
+			(((uint32_t)(*initGr))<<16);
 		initB++;
 		initGb++;
 
@@ -381,19 +421,20 @@ static void vfe_write_lens_roll_off_table(struct vfe_cmd_roll_off_config *in)
 
 	/* there are gaps between the init table and delta table,
 	 * set the offset for delta table. */
-	writel(LENS_ROLL_OFF_DELTA_TABLE_OFFSET, ctrl->vfebase + VFE_DMI_ADDR);
+	writel(LENS_ROLL_OFF_DELTA_TABLE_OFFSET,
+		ctrl->vfebase + VFE_DMI_ADDR);
 
 	/* pack and write delta table */
 	for (i = 0; i < VFE_ROLL_OFF_DELTA_TABLE_SIZE; i++) {
-		data = (((int)(*pDeltaR)) & 0x0000FFFF) |
-			(((int)(*pDeltaGr))<<16);
+		data = (((int32_t)(*pDeltaR)) & 0x0000FFFF) |
+			(((int32_t)(*pDeltaGr))<<16);
 		pDeltaR++;
 		pDeltaGr++;
 
 		writel(data, ctrl->vfebase + VFE_DMI_DATA_LO);
 
-		data = (((int)(*pDeltaB)) & 0x0000FFFF) |
-			(((int)(*pDeltaGb))<<16);
+		data = (((int32_t)(*pDeltaB)) & 0x0000FFFF) |
+			(((int32_t)(*pDeltaGb))<<16);
 		pDeltaB++;
 		pDeltaGb++;
 
@@ -438,6 +479,16 @@ static void vfe_pm_stop(void)
 	writel(VFE_PERFORMANCE_MONITOR_STOP, ctrl->vfebase + VFE_BUS_PM_CMD);
 }
 
+static void vfe_program_bus_rd_irq_en(uint32_t value)
+{
+	writel(value, ctrl->vfebase + VFE_BUS_PINGPONG_IRQ_EN);
+}
+
+static void vfe_camif_go(void)
+{
+	writel(CAMIF_COMMAND_START, ctrl->vfebase + CAMIF_COMMAND);
+}
+
 static void vfe_camif_stop_immediately(void)
 {
 	writel(CAMIF_COMMAND_STOP_IMMEDIATELY, ctrl->vfebase + CAMIF_COMMAND);
@@ -447,6 +498,11 @@ static void vfe_camif_stop_immediately(void)
 static void vfe_program_reg_update_cmd(uint32_t value)
 {
 	writel(value, ctrl->vfebase + VFE_REG_UPDATE_CMD);
+}
+
+static void vfe_program_bus_cmd(uint32_t value)
+{
+	writel(value, ctrl->vfebase + VFE_BUS_CMD);
 }
 
 static void vfe_program_global_reset_cmd(uint32_t value)
@@ -469,9 +525,19 @@ static inline void vfe_program_irq_mask(uint32_t value)
 	writel(value, ctrl->vfebase + VFE_IRQ_MASK);
 }
 
+static void vfe_program_chroma_upsample_cfg(uint32_t value)
+{
+	writel(value, ctrl->vfebase + VFE_CHROMA_UPSAMPLE_CFG);
+}
+
 static uint32_t vfe_read_axi_status(void)
 {
 	return readl(ctrl->vfebase + VFE_AXI_STATUS);
+}
+
+static uint32_t vfe_read_pm_status_in_raw_capture(void)
+{
+	return readl(ctrl->vfebase + VFE_BUS_ENC_CBCR_WR_PM_STATS_1);
 }
 
 static void
@@ -487,6 +553,11 @@ vfe_set_stats_pingpong_address(struct vfe_stats_control *afControl,
 		(ctrl->vfebase + VFE_BUS_STATS_AWB_WR_PING_ADDR);
 	awbControl->hwRegPongAddress = (uint8_t *)
 		(ctrl->vfebase + VFE_BUS_STATS_AWB_WR_PONG_ADDR);
+}
+
+static uint32_t vfe_read_camif_status(void)
+{
+	return readl(ctrl->vfebase + CAMIF_STATUS);
 }
 
 static void vfe_program_lut_bank_sel(struct vfe_gamma_lut_sel *in)
@@ -607,28 +678,56 @@ vfe_irq_composite_pack(struct vfe_irq_composite_mask_config data)
 }
 
 static void vfe_addr_convert(struct msm_vfe_phy_info *pinfo,
-				enum vfe_resp_msg type, void *data, void **ext,
-				int *elen)
+	enum vfe_resp_msg type, void *data, void **ext, int32_t *elen)
 {
 	switch (type) {
-	case VFE_MSG_OUTPUT_P:
-	case VFE_MSG_OUTPUT_V:{
+	case VFE_MSG_OUTPUT1: {
+		pinfo->y_phy =
+			((struct vfe_message *)data)->_u.msgOutput1.yBuffer;
+		pinfo->cbcr_phy =
+			((struct vfe_message *)data)->_u.msgOutput1.cbcrBuffer;
+
+		((struct vfe_frame_extra *)ctrl->extdata)->bpcInfo =
+		((struct vfe_message *)data)->_u.msgOutput1.bpcInfo;
+
+		((struct vfe_frame_extra *)ctrl->extdata)->asfInfo =
+		((struct vfe_message *)data)->_u.msgOutput1.asfInfo;
+
+		((struct vfe_frame_extra *)ctrl->extdata)->frameCounter =
+		((struct vfe_message *)data)->_u.msgOutput1.frameCounter;
+
+		((struct vfe_frame_extra *)ctrl->extdata)->pmData =
+		((struct vfe_message *)data)->_u.msgOutput1.pmData;
+
+		*ext  = ctrl->extdata;
+		*elen = ctrl->extlen;
+	}
+		break;
+
+	case VFE_MSG_OUTPUT2: {
 		pinfo->y_phy =
 			((struct vfe_message *)data)->_u.msgOutput2.yBuffer;
 		pinfo->cbcr_phy =
-			((struct vfe_message *)data)->_u.msgOutput2.
-			cbcrBuffer;
-		ctrl->extdata.bpcInfo =
-			((struct vfe_message *)data)->_u.msgOutput2.bpcInfo;
-		ctrl->extdata.asfInfo =
-			((struct vfe_message *)data)->_u.msgOutput2.asfInfo;
-		ctrl->extdata.frameCounter =
-			((struct vfe_message *)data)->_u.msgOutput2.
-			frameCounter;
-		ctrl->extdata.pmData =
+			((struct vfe_message *)data)->_u.msgOutput2.cbcrBuffer;
+
+		CDBG("vfe_addr_convert, pinfo->y_phy = 0x%x\n", pinfo->y_phy);
+		CDBG("vfe_addr_convert, pinfo->cbcr_phy = 0x%x\n",
+			pinfo->cbcr_phy);
+
+		((struct vfe_frame_extra *)ctrl->extdata)->bpcInfo =
+		((struct vfe_message *)data)->_u.msgOutput2.bpcInfo;
+
+		((struct vfe_frame_extra *)ctrl->extdata)->asfInfo =
+		((struct vfe_message *)data)->_u.msgOutput2.asfInfo;
+
+		((struct vfe_frame_extra *)ctrl->extdata)->frameCounter =
+		((struct vfe_message *)data)->_u.msgOutput2.frameCounter;
+
+		((struct vfe_frame_extra *)ctrl->extdata)->pmData =
 		((struct vfe_message *)data)->_u.msgOutput2.pmData;
-		*ext = &ctrl->extdata;
-		*elen = sizeof(ctrl->extdata);
+
+		*ext  = ctrl->extdata;
+		*elen = ctrl->extlen;
 	}
 		break;
 
@@ -647,183 +746,147 @@ static void vfe_addr_convert(struct msm_vfe_phy_info *pinfo,
 	} /* switch */
 }
 
-static boolean vfe_send_preview_msg(struct msm_vfe_resp *rp,
-			struct vfe_message *msg, void *data);
-static boolean vfe_send_video_msg(struct msm_vfe_resp *rp,
-			struct vfe_message *msg, void *data);
-static boolean vfe_send_mainimage_msg(struct msm_vfe_resp *rp,
-			struct vfe_message *msg, void *data);
-static boolean vfe_send_thumbnail_msg(struct msm_vfe_resp *rp,
-			struct vfe_message *msg, void *data);
-static boolean vfe_send_af_stats_msg(struct msm_vfe_resp *rp,
-			struct vfe_message *msg, void *data);
-static boolean vfe_send_awb_stats_msg(struct msm_vfe_resp *rp,
-			struct vfe_message *msg, void *data);
-static boolean vfe_send_camif_error_msg(struct msm_vfe_resp *rp,
-			struct vfe_message *msg, void *data);
-static boolean vfe_send_bus_overflow_msg(struct msm_vfe_resp *rp,
-			struct vfe_message *msg, void *data);
-static boolean vfe_send_sof_msg(struct msm_vfe_resp *rp,
-			struct vfe_message *msg, void *data);
-
-static boolean invalid(struct msm_vfe_resp *rp,
-		struct vfe_message *_m, void *_d)
-{
-	BUG_ON(1); /* this function should not be called. */
-	return FALSE;
-}
-
-static struct {
-	boolean (*fn)(struct msm_vfe_resp *rp, struct vfe_message *msg,
-		void *data);
-	enum vfe_resp_msg rt; /* reponse type */
-} vfe_funcs[] = {
-	[VFE_MSG_ID_RESET_ACK] = { NULL, VFE_MSG_GENERAL },
-	[VFE_MSG_ID_START_ACK] = { NULL, VFE_MSG_GENERAL },
-	[VFE_MSG_ID_STOP_ACK] = { NULL, VFE_MSG_GENERAL },
-	[VFE_MSG_ID_UPDATE_ACK] = { NULL, VFE_MSG_GENERAL },
-	[VFE_MSG_ID_OUTPUT_P] = { vfe_send_preview_msg, VFE_MSG_OUTPUT_P },
-	[VFE_MSG_ID_OUTPUT_V] = { vfe_send_video_msg, VFE_MSG_OUTPUT_V },
-	[VFE_MSG_ID_OUTPUT_S] = { vfe_send_mainimage_msg, VFE_MSG_OUTPUT_S },
-	[VFE_MSG_ID_OUTPUT_T] = { vfe_send_thumbnail_msg, VFE_MSG_OUTPUT_T },
-	[VFE_MSG_ID_SNAPSHOT_DONE] = { NULL, VFE_MSG_SNAPSHOT },
-	[VFE_MSG_ID_STATS_AUTOFOCUS] = { vfe_send_af_stats_msg,
-		VFE_MSG_STATS_AF },
-	[VFE_MSG_ID_STATS_WB_EXP] = { vfe_send_awb_stats_msg,
-		VFE_MSG_STATS_WE },
-	[VFE_MSG_ID_EPOCH1] = { NULL, VFE_MSG_GENERAL },
-	[VFE_MSG_ID_EPOCH2] = { NULL, VFE_MSG_GENERAL },
-	[VFE_MSG_ID_SYNC_TIMER0_DONE] = { invalid },
-	[VFE_MSG_ID_SYNC_TIMER1_DONE] = { invalid },
-	[VFE_MSG_ID_SYNC_TIMER2_DONE] = { invalid },
-	[VFE_MSG_ID_ASYNC_TIMER0_DONE] = { invalid },
-	[VFE_MSG_ID_ASYNC_TIMER1_DONE] = { invalid },
-	[VFE_MSG_ID_ASYNC_TIMER2_DONE] = { invalid },
-	[VFE_MSG_ID_ASYNC_TIMER3_DONE] = { invalid },
-	[VFE_MSG_ID_AF_OVERFLOW] = { NULL, VFE_MSG_GENERAL },
-	[VFE_MSG_ID_AWB_OVERFLOW] = { NULL, VFE_MSG_GENERAL },
-	[VFE_MSG_ID_AXI_ERROR] = { NULL, VFE_MSG_GENERAL },
-	[VFE_MSG_ID_CAMIF_OVERFLOW] = { NULL, VFE_MSG_GENERAL },
-	[VFE_MSG_ID_VIOLATION] = { invalid },
-	[VFE_MSG_ID_CAMIF_ERROR] = { vfe_send_camif_error_msg,
-		VFE_MSG_GENERAL },
-	[VFE_MSG_ID_BUS_OVERFLOW] = { vfe_send_bus_overflow_msg,
-		VFE_MSG_GENERAL },
-	[VFE_MSG_ID_SOF_ACK] = { vfe_send_sof_msg,
-		VFE_MSG_GENERAL },
-};
-
-static void vfe_proc_ops(enum VFE_MESSAGE_ID id, void *data)
+static void
+vfe_proc_ops(enum VFE_MESSAGE_ID id, void *msg, size_t len)
 {
 	struct msm_vfe_resp *rp;
+
+	/* In 8k, OUTPUT1 & OUTPUT2 messages arrive before
+	 * SNAPSHOT_DONE. We don't send such messages to user */
+
+	CDBG("ctrl->vfeOperationMode = %d, msgId = %d\n",
+		ctrl->vfeOperationMode, id);
+
+	if ((ctrl->vfeOperationMode == VFE_START_OPERATION_MODE_SNAPSHOT) &&
+		(id == VFE_MSG_ID_OUTPUT1 || id == VFE_MSG_ID_OUTPUT2)) {
+		return;
+	}
+
+	rp = ctrl->resp->vfe_alloc(sizeof(struct msm_vfe_resp), ctrl->syncdata);
+	if (!rp) {
+		CDBG("rp: cannot allocate buffer\n");
+		return;
+	}
+
+	CDBG("vfe_proc_ops, msgId = %d\n", id);
+
+	rp->evt_msg.type   = MSM_CAMERA_MSG;
+	rp->evt_msg.msg_id = id;
+	rp->evt_msg.len    = len;
+	rp->evt_msg.data   = msg;
+
+	switch (rp->evt_msg.msg_id) {
+	case VFE_MSG_ID_SNAPSHOT_DONE:
+		rp->type = VFE_MSG_SNAPSHOT;
+		break;
+
+	case VFE_MSG_ID_OUTPUT1:
+		rp->type = VFE_MSG_OUTPUT1;
+		vfe_addr_convert(&(rp->phy), VFE_MSG_OUTPUT1,
+			rp->evt_msg.data, &(rp->extdata),
+			&(rp->extlen));
+		break;
+
+	case VFE_MSG_ID_OUTPUT2:
+		rp->type = VFE_MSG_OUTPUT2;
+		vfe_addr_convert(&(rp->phy), VFE_MSG_OUTPUT2,
+				rp->evt_msg.data, &(rp->extdata),
+				&(rp->extlen));
+		break;
+
+	case VFE_MSG_ID_STATS_AUTOFOCUS:
+		rp->type = VFE_MSG_STATS_AF;
+		vfe_addr_convert(&(rp->phy), VFE_MSG_STATS_AF,
+				rp->evt_msg.data, NULL, NULL);
+		break;
+
+	case VFE_MSG_ID_STATS_WB_EXP:
+		rp->type = VFE_MSG_STATS_WE;
+		vfe_addr_convert(&(rp->phy), VFE_MSG_STATS_WE,
+				rp->evt_msg.data, NULL, NULL);
+		break;
+
+	default:
+		rp->type = VFE_MSG_GENERAL;
+		break;
+	}
+
+	ctrl->resp->vfe_resp(rp, MSM_CAM_Q_VFE_MSG, ctrl->syncdata);
+}
+
+static void vfe_send_msg_no_payload(enum VFE_MESSAGE_ID id)
+{
 	struct vfe_message *msg;
 
-	if (id >= ARRAY_SIZE(vfe_funcs) || vfe_funcs[id].fn == invalid) {
-		pr_err("%s: invalid VFE message id %d\n", __func__, id);
-		return;
-	}
-
-	/* In 8k, OUTPUT1 & OUTPUT2 messages arrive before SNAPSHOT_DONE.
-	 * We don't send such messages to the user.  Note that we can do
-	 * this in the vfe_func[] callback, but that would cause us to
-	 * allocate and then immediately free the msm_vfe_resp structure,
-	 * which is wasteful.
-	 */
-	if ((ctrl->vfeOperationMode == VFE_START_OPERATION_MODE_SNAPSHOT) &&
-			(id == VFE_MSG_ID_OUTPUT_T ||
-			 id == VFE_MSG_ID_OUTPUT_S))
+	msg = kzalloc(sizeof(msg), GFP_ATOMIC);
+	if (!msg)
 		return;
 
-	rp = ctrl->resp->vfe_alloc(sizeof(*rp) +
-					(vfe_funcs[id].fn ? sizeof(*msg) : 0),
-					ctrl->syncdata,
-					GFP_ATOMIC);
-	if (!rp) {
-		pr_err("%s: out of memory\n", __func__);
-		return;
-	}
-
-	rp->type = vfe_funcs[id].rt;
-	rp->evt_msg.type = MSM_CAMERA_MSG;
-	rp->evt_msg.msg_id = id;
-
-	if (!vfe_funcs[id].fn) {
-		rp->evt_msg.len = 0;
-		rp->evt_msg.data = 0;
-	} else {
-		/* populate the message accordingly */
-		if (vfe_funcs[id].fn)
-			rp->evt_msg.data = msg =
-				(struct vfe_message *)(rp + 1);
-		else
-			rp->evt_msg.data = msg = 0;
-		rp->evt_msg.len = sizeof(*msg);
-		msg->_d = id;
-		if (vfe_funcs[id].fn(rp, msg, data) == FALSE) {
-			pr_info("%s: freeing memory: handler for %d "
-				"returned false\n", __func__, id);
-			ctrl->resp->vfe_free(rp);
-			return;
-		}
+	msg->_d = id;
+	vfe_proc_ops(id, msg, 0);
 }
 
-	ctrl->resp->vfe_resp(rp, MSM_CAM_Q_VFE_MSG, ctrl->syncdata, GFP_KERNEL);
-}
-
-static boolean vfe_send_bus_overflow_msg(struct msm_vfe_resp *rp,
-			struct vfe_message *msg,
-			void *data)
+static void vfe_send_bus_overflow_msg(void)
 {
+	struct vfe_message *msg;
+	msg =
+		kzalloc(sizeof(struct vfe_message), GFP_ATOMIC);
+	if (!msg)
+		return;
+
+	msg->_d = VFE_MSG_ID_BUS_OVERFLOW;
 #if 0
 	memcpy(&(msg->_u.msgBusOverflow),
 		&ctrl->vfePmData, sizeof(ctrl->vfePmData));
 #endif
-	return TRUE;
+
+	vfe_proc_ops(VFE_MSG_ID_BUS_OVERFLOW,
+		msg, sizeof(struct vfe_message));
 }
 
-static boolean vfe_send_sof_msg(struct msm_vfe_resp *rp,
-			struct vfe_message *msg,
-			void *data)
-{
-	return TRUE;
-}
-static boolean vfe_send_camif_error_msg(struct msm_vfe_resp *rp,
-			struct vfe_message *msg,
-			void *data)
+static void vfe_send_camif_error_msg(void)
 {
 #if 0
+	struct vfe_message *msg;
+	msg =
+		kzalloc(sizeof(struct vfe_message), GFP_ATOMIC);
+	if (!msg)
+		return;
+
+	msg->_d = VFE_MSG_ID_CAMIF_ERROR;
 	memcpy(&(msg->_u.msgCamifError),
-	       &ctrl->vfeCamifStatusLocal, sizeof(ctrl->vfeCamifStatusLocal));
+		&ctrl->vfeCamifStatusLocal, sizeof(ctrl->vfeCamifStatusLocal));
+
+	vfe_proc_ops(VFE_MSG_ID_CAMIF_ERROR,
+		msg, sizeof(struct vfe_message));
 #endif
-	return TRUE;
 }
 
-static void vfe_process_error_irq(struct vfe_interrupt_status *irqstatus)
+static void vfe_process_error_irq(
+	struct vfe_interrupt_status *irqstatus)
 {
 	/* all possible error irq.  Note error irqs are not enabled, it is
 	 * checked only when other interrupts are present. */
 	if (irqstatus->afOverflowIrq)
-		vfe_proc_ops(VFE_MSG_ID_AF_OVERFLOW, NULL);
+		vfe_send_msg_no_payload(VFE_MSG_ID_AF_OVERFLOW);
 
 	if (irqstatus->awbOverflowIrq)
-		vfe_proc_ops(VFE_MSG_ID_AWB_OVERFLOW, NULL);
+		vfe_send_msg_no_payload(VFE_MSG_ID_AWB_OVERFLOW);
 
 	if (irqstatus->axiErrorIrq)
-		vfe_proc_ops(VFE_MSG_ID_AXI_ERROR, NULL);
+		vfe_send_msg_no_payload(VFE_MSG_ID_AXI_ERROR);
 
 	if (irqstatus->busOverflowIrq)
-		vfe_proc_ops(VFE_MSG_ID_BUS_OVERFLOW, NULL);
+		vfe_send_bus_overflow_msg();
 
-	if (irqstatus->camifErrorIrq) {
-		CDBG("vfe_irq: camif errors\n");
-		vfe_proc_ops(VFE_MSG_ID_CAMIF_ERROR, NULL);
-	}
+	if (irqstatus->camifErrorIrq)
+		vfe_send_camif_error_msg();
 
 	if (irqstatus->camifOverflowIrq)
-		vfe_proc_ops(VFE_MSG_ID_CAMIF_OVERFLOW, NULL);
+		vfe_send_msg_no_payload(VFE_MSG_ID_CAMIF_OVERFLOW);
 
 	if (irqstatus->violationIrq)
-		pr_err("%s: violation irq\n", __func__);
+		;
 }
 
 static void vfe_process_camif_sof_irq(void)
@@ -831,7 +894,8 @@ static void vfe_process_camif_sof_irq(void)
 	/* increment the frame id number. */
 	ctrl->vfeFrameId++;
 
-	CDBG("camif_sof_irq, frameId = %d\n", ctrl->vfeFrameId);
+	CDBG("camif_sof_irq, frameId = %d\n",
+		ctrl->vfeFrameId);
 
 	/* In snapshot mode, if frame skip is programmed,
 	* need to check it accordingly to stop camif at
@@ -841,7 +905,8 @@ static void vfe_process_camif_sof_irq(void)
 	* to stop the camif.
 	*/
 	if (ctrl->vfeOperationMode) {
-		if ((1 << ctrl->vfeFrameSkipCount)&ctrl->vfeFrameSkipPattern) {
+		if ((1 << ctrl->vfeFrameSkipCount) &
+				ctrl->vfeFrameSkipPattern) {
 
 			ctrl->vfeSnapShotCount--;
 			if (ctrl->vfeSnapShotCount == 0)
@@ -852,17 +917,24 @@ static void vfe_process_camif_sof_irq(void)
 
 		/* update frame skip counter for bit checking. */
 		ctrl->vfeFrameSkipCount++;
-		if (ctrl->vfeFrameSkipCount == (ctrl->vfeFrameSkipPeriod + 1))
+		if (ctrl->vfeFrameSkipCount ==
+				(ctrl->vfeFrameSkipPeriod + 1))
 			ctrl->vfeFrameSkipCount = 0;
 	}
-	vfe_proc_ops(VFE_MSG_ID_SOF_ACK, NULL);
 }
 
-static boolean vfe_get_af_pingpong_status(void)
+static int vfe_get_af_pingpong_status(void)
 {
-	uint32_t busPingPongStatus =
+	uint32_t busPingPongStatus;
+	int rc = 0;
+
+	busPingPongStatus =
 		readl(ctrl->vfebase + VFE_BUS_PINGPONG_STATUS);
-	return !!(busPingPongStatus & VFE_AF_PINGPONG_STATUS_BIT);
+
+	if ((busPingPongStatus & VFE_AF_PINGPONG_STATUS_BIT) == 0)
+		return -EFAULT;
+
+	return rc;
 }
 
 static uint32_t vfe_read_af_buf_addr(boolean pipo)
@@ -873,7 +945,8 @@ static uint32_t vfe_read_af_buf_addr(boolean pipo)
 		return readl(ctrl->vfebase + VFE_BUS_STATS_AF_WR_PONG_ADDR);
 }
 
-static void vfe_update_af_buf_addr(boolean pipo, uint32_t addr)
+static void
+vfe_update_af_buf_addr(boolean pipo, uint32_t addr)
 {
 	if (pipo == FALSE)
 		writel(addr, ctrl->vfebase + VFE_BUS_STATS_AF_WR_PING_ADDR);
@@ -881,25 +954,34 @@ static void vfe_update_af_buf_addr(boolean pipo, uint32_t addr)
 		writel(addr, ctrl->vfebase + VFE_BUS_STATS_AF_WR_PONG_ADDR);
 }
 
-static boolean vfe_send_af_stats_msg(struct msm_vfe_resp *rp,
-		struct vfe_message *msg, void *data)
+static void
+vfe_send_af_stats_msg(uint32_t afBufAddress)
 {
-	uint32_t afBufAddress = (uint32_t)data;
+	/* unsigned long flags; */
+	struct vfe_message *msg;
+	msg =
+		kzalloc(sizeof(struct vfe_message), GFP_ATOMIC);
+	if (!msg)
+		return;
 
 	/* fill message with right content. */
 	/* @todo This is causing issues, need further investigate */
 	/* spin_lock_irqsave(&ctrl->state_lock, flags); */
 	if (ctrl->vstate != VFE_STATE_ACTIVE)
-		return FALSE;
+		goto af_stats_done;
 
+	msg->_d = VFE_MSG_ID_STATS_AUTOFOCUS;
 	msg->_u.msgStatsAf.afBuffer = afBufAddress;
 	msg->_u.msgStatsAf.frameCounter = ctrl->vfeFrameId;
 
+	vfe_proc_ops(VFE_MSG_ID_STATS_AUTOFOCUS,
+		msg, sizeof(struct vfe_message));
+
 	ctrl->afStatsControl.ackPending = TRUE;
 
-	vfe_addr_convert(&(rp->phy), rp->type, msg, NULL, NULL);
+af_stats_done:
 	/* spin_unlock_irqrestore(&ctrl->state_lock, flags); */
-	return TRUE;
+	return;
 }
 
 static void vfe_process_stats_af_irq(void)
@@ -912,7 +994,8 @@ static void vfe_process_stats_af_irq(void)
 		ctrl->afStatsControl.pingPongStatus =
 			vfe_get_af_pingpong_status();
 
-		bufferAvailable = (ctrl->afStatsControl.pingPongStatus) ^ 1;
+		bufferAvailable =
+			(ctrl->afStatsControl.pingPongStatus) ^ 1;
 
 		ctrl->afStatsControl.bufToRender =
 			vfe_read_af_buf_addr(bufferAvailable);
@@ -921,23 +1004,26 @@ static void vfe_process_stats_af_irq(void)
 		vfe_update_af_buf_addr(bufferAvailable,
 			ctrl->afStatsControl.nextFrameAddrBuf);
 
-		vfe_proc_ops(VFE_MSG_ID_STATS_AUTOFOCUS,
-			(void *)ctrl->afStatsControl.bufToRender);
+		vfe_send_af_stats_msg(ctrl->afStatsControl.bufToRender);
 	} else
 		ctrl->afStatsControl.droppedStatsFrameCount++;
 }
 
 static boolean vfe_get_awb_pingpong_status(void)
 {
-	uint32_t busPingPongStatus =
+	uint32_t busPingPongStatus;
 
+	busPingPongStatus =
 		readl(ctrl->vfebase + VFE_BUS_PINGPONG_STATUS);
 
-	return !!(busPingPongStatus & VFE_AWB_PINGPONG_STATUS_BIT);
+	if ((busPingPongStatus & VFE_AWB_PINGPONG_STATUS_BIT) == 0)
+		return FALSE;
 
+	return TRUE;
 }
 
-static uint32_t vfe_read_awb_buf_addr(boolean pingpong)
+static uint32_t
+vfe_read_awb_buf_addr(boolean pingpong)
 {
 	if (pingpong == FALSE)
 		return readl(ctrl->vfebase + VFE_BUS_STATS_AWB_WR_PING_ADDR);
@@ -945,7 +1031,8 @@ static uint32_t vfe_read_awb_buf_addr(boolean pingpong)
 		return readl(ctrl->vfebase + VFE_BUS_STATS_AWB_WR_PONG_ADDR);
 }
 
-static void vfe_update_awb_buf_addr(boolean pingpong, uint32_t addr)
+static void vfe_update_awb_buf_addr(
+	boolean pingpong, uint32_t addr)
 {
 	if (pingpong == FALSE)
 		writel(addr, ctrl->vfebase + VFE_BUS_STATS_AWB_WR_PING_ADDR);
@@ -953,28 +1040,34 @@ static void vfe_update_awb_buf_addr(boolean pingpong, uint32_t addr)
 		writel(addr, ctrl->vfebase + VFE_BUS_STATS_AWB_WR_PONG_ADDR);
 }
 
-static boolean vfe_send_awb_stats_msg(struct msm_vfe_resp *rp,
-		struct vfe_message *msg, void *data)
+static void vfe_send_awb_stats_msg(uint32_t awbBufAddress)
 {
-	uint32_t awbBufAddress = (uint32_t)data;
+	/* unsigned long flags; */
+	struct vfe_message   *msg;
+
+	msg =
+		kzalloc(sizeof(struct vfe_message), GFP_ATOMIC);
+	if (!msg)
+		return;
 
 	/* fill message with right content. */
 	/* @todo This is causing issues, need further investigate */
 	/* spin_lock_irqsave(&ctrl->state_lock, flags); */
 	if (ctrl->vstate != VFE_STATE_ACTIVE)
-		return FALSE;
+		goto awb_stats_done;
 
+	msg->_d = VFE_MSG_ID_STATS_WB_EXP;
 	msg->_u.msgStatsWbExp.awbBuffer = awbBufAddress;
 	msg->_u.msgStatsWbExp.frameCounter = ctrl->vfeFrameId;
 
+	vfe_proc_ops(VFE_MSG_ID_STATS_WB_EXP,
+		msg, sizeof(struct vfe_message));
 
 	ctrl->awbStatsControl.ackPending = TRUE;
 
-	vfe_addr_convert(&(rp->phy),
-			rp->type, msg,
-			NULL, NULL);
-
-	return TRUE;
+awb_stats_done:
+	/* spin_unlock_irqrestore(&ctrl->state_lock, flags); */
+	return;
 }
 
 static void vfe_process_stats_awb_irq(void)
@@ -994,11 +1087,50 @@ static void vfe_process_stats_awb_irq(void)
 		vfe_update_awb_buf_addr(bufferAvailable,
 			ctrl->awbStatsControl.nextFrameAddrBuf);
 
-		vfe_proc_ops(VFE_MSG_ID_STATS_WB_EXP,
-			(void *)ctrl->awbStatsControl.bufToRender);
+		vfe_send_awb_stats_msg(ctrl->awbStatsControl.bufToRender);
 
 	} else
 		ctrl->awbStatsControl.droppedStatsFrameCount++;
+}
+
+static void vfe_process_sync_timer_irq(
+	struct vfe_interrupt_status *irqstatus)
+{
+	if (irqstatus->syncTimer0Irq)
+		vfe_send_msg_no_payload(VFE_MSG_ID_SYNC_TIMER0_DONE);
+
+	if (irqstatus->syncTimer1Irq)
+		vfe_send_msg_no_payload(VFE_MSG_ID_SYNC_TIMER1_DONE);
+
+	if (irqstatus->syncTimer2Irq)
+		vfe_send_msg_no_payload(VFE_MSG_ID_SYNC_TIMER2_DONE);
+}
+
+static void vfe_process_async_timer_irq(
+	struct vfe_interrupt_status *irqstatus)
+{
+
+	if (irqstatus->asyncTimer0Irq)
+		vfe_send_msg_no_payload(VFE_MSG_ID_ASYNC_TIMER0_DONE);
+
+	if (irqstatus->asyncTimer1Irq)
+		vfe_send_msg_no_payload(VFE_MSG_ID_ASYNC_TIMER1_DONE);
+
+	if (irqstatus->asyncTimer2Irq)
+		vfe_send_msg_no_payload(VFE_MSG_ID_ASYNC_TIMER2_DONE);
+
+	if (irqstatus->asyncTimer3Irq)
+		vfe_send_msg_no_payload(VFE_MSG_ID_ASYNC_TIMER3_DONE);
+}
+
+static void vfe_send_violation_msg(void)
+{
+	vfe_send_msg_no_payload(VFE_MSG_ID_VIOLATION);
+}
+
+static void vfe_send_async_timer_msg(void)
+{
+	vfe_send_msg_no_payload(VFE_MSG_ID_ASYNC_TIMER0_DONE);
 }
 
 static void vfe_write_gamma_table(uint8_t channel,
@@ -1062,12 +1194,10 @@ static inline void vfe_read_irq_status(struct vfe_irq_thread_msg *out)
 
 	temp = (uint32_t *)(ctrl->vfebase + CAMIF_STATUS);
 	out->camifStatus = readl(temp);
-
-/*	this for YUV performance tuning
 	writel(0x7, ctrl->vfebase + CAMIF_COMMAND);
 	writel(0x3, ctrl->vfebase + CAMIF_COMMAND);
 	CDBG("camifStatus  = 0x%x\n", out->camifStatus);
-*/
+
 /*
 	temp = (uint32_t *)(ctrl->vfebase + VFE_DEMOSAIC_STATUS);
 	out->demosaicStatus = readl(temp);
@@ -1090,169 +1220,202 @@ static inline void vfe_read_irq_status(struct vfe_irq_thread_msg *out)
 #endif /* if 0 Jeff */
 }
 
-static void
-vfe_parse_interrupt_status(struct vfe_interrupt_status *ret,
-uint32_t irqStatusIn)
+static struct vfe_interrupt_status
+vfe_parse_interrupt_status(uint32_t irqStatusIn)
 {
 	struct vfe_irqenable hwstat;
+	struct vfe_interrupt_status ret;
 	boolean temp;
 
 	memset(&hwstat, 0, sizeof(hwstat));
-	memset(ret, 0, sizeof(*ret));
+	memset(&ret, 0, sizeof(ret));
 
 	hwstat = *((struct vfe_irqenable *)(&irqStatusIn));
 
-	ret->camifErrorIrq = hwstat.camifErrorIrq;
-	ret->camifSofIrq = hwstat.camifSofIrq;
-	ret->camifEolIrq = hwstat.camifEolIrq;
-	ret->camifEofIrq = hwstat.camifEofIrq;
-	ret->camifEpoch1Irq = hwstat.camifEpoch1Irq;
-	ret->camifEpoch2Irq = hwstat.camifEpoch2Irq;
-	ret->camifOverflowIrq = hwstat.camifOverflowIrq;
-	ret->ceIrq = hwstat.ceIrq;
-	ret->regUpdateIrq = hwstat.regUpdateIrq;
-	ret->resetAckIrq = hwstat.resetAckIrq;
-	ret->encYPingpongIrq = hwstat.encYPingpongIrq;
-	ret->encCbcrPingpongIrq = hwstat.encCbcrPingpongIrq;
-	ret->viewYPingpongIrq = hwstat.viewYPingpongIrq;
-	ret->viewCbcrPingpongIrq = hwstat.viewCbcrPingpongIrq;
-	ret->rdPingpongIrq = hwstat.rdPingpongIrq;
-	ret->afPingpongIrq = hwstat.afPingpongIrq;
-	ret->awbPingpongIrq = hwstat.awbPingpongIrq;
-	ret->histPingpongIrq = hwstat.histPingpongIrq;
-	ret->encIrq = hwstat.encIrq;
-	ret->viewIrq = hwstat.viewIrq;
-	ret->busOverflowIrq = hwstat.busOverflowIrq;
-	ret->afOverflowIrq = hwstat.afOverflowIrq;
-	ret->awbOverflowIrq = hwstat.awbOverflowIrq;
-	ret->syncTimer0Irq = hwstat.syncTimer0Irq;
-	ret->syncTimer1Irq = hwstat.syncTimer1Irq;
-	ret->syncTimer2Irq = hwstat.syncTimer2Irq;
-	ret->asyncTimer0Irq = hwstat.asyncTimer0Irq;
-	ret->asyncTimer1Irq = hwstat.asyncTimer1Irq;
-	ret->asyncTimer2Irq = hwstat.asyncTimer2Irq;
-	ret->asyncTimer3Irq = hwstat.asyncTimer3Irq;
-	ret->axiErrorIrq = hwstat.axiErrorIrq;
-	ret->violationIrq = hwstat.violationIrq;
+	ret.camifErrorIrq       = hwstat.camifErrorIrq;
+	ret.camifSofIrq         = hwstat.camifSofIrq;
+	ret.camifEolIrq         = hwstat.camifEolIrq;
+	ret.camifEofIrq         = hwstat.camifEofIrq;
+	ret.camifEpoch1Irq      = hwstat.camifEpoch1Irq;
+	ret.camifEpoch2Irq      = hwstat.camifEpoch2Irq;
+	ret.camifOverflowIrq    = hwstat.camifOverflowIrq;
+	ret.ceIrq               = hwstat.ceIrq;
+	ret.regUpdateIrq        = hwstat.regUpdateIrq;
+	ret.resetAckIrq         = hwstat.resetAckIrq;
+	ret.encYPingpongIrq     = hwstat.encYPingpongIrq;
+	ret.encCbcrPingpongIrq  = hwstat.encCbcrPingpongIrq;
+	ret.viewYPingpongIrq    = hwstat.viewYPingpongIrq;
+	ret.viewCbcrPingpongIrq = hwstat.viewCbcrPingpongIrq;
+	ret.rdPingpongIrq       = hwstat.rdPingpongIrq;
+	ret.afPingpongIrq       = hwstat.afPingpongIrq;
+	ret.awbPingpongIrq      = hwstat.awbPingpongIrq;
+	ret.histPingpongIrq     = hwstat.histPingpongIrq;
+	ret.encIrq              = hwstat.encIrq;
+	ret.viewIrq             = hwstat.viewIrq;
+	ret.busOverflowIrq      = hwstat.busOverflowIrq;
+	ret.afOverflowIrq       = hwstat.afOverflowIrq;
+	ret.awbOverflowIrq      = hwstat.awbOverflowIrq;
+	ret.syncTimer0Irq       = hwstat.syncTimer0Irq;
+	ret.syncTimer1Irq       = hwstat.syncTimer1Irq;
+	ret.syncTimer2Irq       = hwstat.syncTimer2Irq;
+	ret.asyncTimer0Irq      = hwstat.asyncTimer0Irq;
+	ret.asyncTimer1Irq      = hwstat.asyncTimer1Irq;
+	ret.asyncTimer2Irq      = hwstat.asyncTimer2Irq;
+	ret.asyncTimer3Irq      = hwstat.asyncTimer3Irq;
+	ret.axiErrorIrq         = hwstat.axiErrorIrq;
+	ret.violationIrq        = hwstat.violationIrq;
 
 	/* logic OR of any error bits
 	 * although each irq corresponds to a bit, the data type here is a
 	 * boolean already. hence use logic operation.
 	 */
 	temp =
-	    ret->camifErrorIrq ||
-	    ret->camifOverflowIrq ||
-	    ret->afOverflowIrq ||
-	    ret->awbOverflowIrq ||
-	    ret->awbPingpongIrq ||
-	    ret->afPingpongIrq ||
-	    ret->busOverflowIrq || ret->axiErrorIrq || ret->violationIrq;
+		ret.camifErrorIrq    ||
+		ret.camifOverflowIrq ||
+		ret.afOverflowIrq    ||
+		ret.awbPingpongIrq   ||
+		ret.busOverflowIrq   ||
+		ret.axiErrorIrq      ||
+		ret.violationIrq;
 
-	ret->anyErrorIrqs = temp;
+	ret.anyErrorIrqs = temp;
 
 	/* logic OR of any output path bits*/
-	temp = ret->encYPingpongIrq || ret->encCbcrPingpongIrq || ret->encIrq;
+	temp =
+		ret.encYPingpongIrq    ||
+		ret.encCbcrPingpongIrq ||
+		ret.encIrq;
 
-	ret->anyOutput2PathIrqs = temp;
+	ret.anyOutput2PathIrqs = temp;
 
-	temp = ret->viewYPingpongIrq || ret->viewCbcrPingpongIrq ||
-		ret->viewIrq;
+	temp =
+		ret.viewYPingpongIrq    ||
+		ret.viewCbcrPingpongIrq ||
+		ret.viewIrq;
 
-	ret->anyOutput1PathIrqs = temp;
+	ret.anyOutput1PathIrqs = temp;
 
-	ret->anyOutputPathIrqs =
-	    ret->anyOutput1PathIrqs || ret->anyOutput2PathIrqs;
+	ret.anyOutputPathIrqs =
+		ret.anyOutput1PathIrqs ||
+		ret.anyOutput2PathIrqs;
 
 	/* logic OR of any sync timer bits*/
-	temp = ret->syncTimer0Irq || ret->syncTimer1Irq || ret->syncTimer2Irq;
+	temp =
+		ret.syncTimer0Irq ||
+		ret.syncTimer1Irq ||
+		ret.syncTimer2Irq;
 
-	ret->anySyncTimerIrqs = temp;
+	ret.anySyncTimerIrqs = temp;
 
 	/* logic OR of any async timer bits*/
 	temp =
-	    ret->asyncTimer0Irq ||
-	    ret->asyncTimer1Irq || ret->asyncTimer2Irq || ret->asyncTimer3Irq;
+		ret.asyncTimer0Irq ||
+		ret.asyncTimer1Irq ||
+		ret.asyncTimer2Irq ||
+		ret.asyncTimer3Irq;
 
-	ret->anyAsyncTimerIrqs = temp;
+	ret.anyAsyncTimerIrqs = temp;
 
 	/* bool for all interrupts that are not allowed in idle state */
 	temp =
-	    ret->anyErrorIrqs ||
-	    ret->anyOutputPathIrqs ||
-	    ret->anySyncTimerIrqs ||
-	    ret->regUpdateIrq ||
-	    ret->awbPingpongIrq ||
-	    ret->afPingpongIrq ||
-	    ret->camifSofIrq || ret->camifEpoch2Irq || ret->camifEpoch1Irq;
+		ret.anyErrorIrqs      ||
+		ret.anyOutputPathIrqs ||
+		ret.anySyncTimerIrqs  ||
+		ret.regUpdateIrq      ||
+		ret.awbPingpongIrq    ||
+		ret.afPingpongIrq     ||
+		ret.camifSofIrq       ||
+		ret.camifEpoch2Irq    ||
+		ret.camifEpoch1Irq;
 
-	ret->anyIrqForActiveStatesOnly = temp;
+	ret.anyIrqForActiveStatesOnly =
+		temp;
+
+	return ret;
 }
 
-static void
-vfe_get_asf_frame_info(struct vfe_frame_asf_info *rc,
-struct vfe_irq_thread_msg *in)
+static struct vfe_frame_asf_info
+vfe_get_asf_frame_info(struct vfe_irq_thread_msg *in)
 {
 	struct vfe_asf_info     asfInfoTemp;
+	struct vfe_frame_asf_info rc;
 
-	memset(rc, 0, sizeof(*rc));
+	memset(&rc, 0, sizeof(rc));
 	memset(&asfInfoTemp, 0, sizeof(asfInfoTemp));
 
-	asfInfoTemp = *((struct vfe_asf_info *)(&(in->asfMaxEdge)));
+	asfInfoTemp =
+		*((struct vfe_asf_info *)(&(in->asfMaxEdge)));
 
-	rc->asfHbiCount = asfInfoTemp.HBICount;
-	rc->asfMaxEdge = asfInfoTemp.maxEdge;
+	rc.asfHbiCount = asfInfoTemp.HBICount;
+	rc.asfMaxEdge  = asfInfoTemp.maxEdge;
+
+	return rc;
 }
 
-static void
-vfe_get_demosaic_frame_info(struct vfe_frame_bpc_info *rc,
-struct vfe_irq_thread_msg *in)
+static struct vfe_frame_bpc_info
+vfe_get_demosaic_frame_info(struct vfe_irq_thread_msg *in)
 {
 	struct vfe_bps_info     bpcInfoTemp;
+	struct vfe_frame_bpc_info rc;
 
-	memset(rc, 0, sizeof(*rc));
+	memset(&rc, 0, sizeof(rc));
 	memset(&bpcInfoTemp, 0, sizeof(bpcInfoTemp));
 
-	bpcInfoTemp = *((struct vfe_bps_info *)(&(in->demosaicStatus)));
+	bpcInfoTemp =
+		*((struct vfe_bps_info *)(&(in->demosaicStatus)));
 
-	rc->greenDefectPixelCount = bpcInfoTemp.greenBadPixelCount;
+	rc.greenDefectPixelCount    =
+		bpcInfoTemp.greenBadPixelCount;
 
-	rc->redBlueDefectPixelCount = bpcInfoTemp.RedBlueBadPixelCount;
+	rc.redBlueDefectPixelCount  =
+		bpcInfoTemp.RedBlueBadPixelCount;
+
+	return rc;
 }
 
-static void
-vfe_get_camif_status(struct vfe_msg_camif_status *rc,
-struct vfe_irq_thread_msg *in)
+static struct vfe_msg_camif_status
+vfe_get_camif_status(struct vfe_irq_thread_msg *in)
 {
 	struct vfe_camif_stats camifStatusTemp;
+	struct vfe_msg_camif_status rc;
 
-	memset(rc, 0, sizeof(*rc));
+	memset(&rc, 0, sizeof(rc));
 	memset(&camifStatusTemp, 0, sizeof(camifStatusTemp));
 
-	camifStatusTemp = *((struct vfe_camif_stats *)(&(in->camifStatus)));
+	camifStatusTemp =
+		*((struct vfe_camif_stats *)(&(in->camifStatus)));
 
-	rc->camifState = (boolean) camifStatusTemp.camifHalt;
-	rc->lineCount = camifStatusTemp.lineCount;
-	rc->pixelCount = camifStatusTemp.pixelCount;
+	rc.camifState = (boolean)camifStatusTemp.camifHalt;
+	rc.lineCount  = camifStatusTemp.lineCount;
+	rc.pixelCount = camifStatusTemp.pixelCount;
+
+	return rc;
 }
 
-static void
-vfe_get_performance_monitor_data(struct vfe_bus_performance_monitor *rc,
-		struct vfe_irq_thread_msg *in)
+static struct vfe_bus_performance_monitor
+vfe_get_performance_monitor_data(struct vfe_irq_thread_msg *in)
 {
-	memset(rc, 0, sizeof(*rc));
+	struct vfe_bus_performance_monitor rc;
+	memset(&rc, 0, sizeof(rc));
 
-	rc->encPathPmInfo.yWrPmStats0 = in->pmInfo.encPathPmInfo.yWrPmStats0;
-	rc->encPathPmInfo.yWrPmStats1 = in->pmInfo.encPathPmInfo.yWrPmStats1;
-	rc->encPathPmInfo.cbcrWrPmStats0 =
+	rc.encPathPmInfo.yWrPmStats0     =
+		in->pmInfo.encPathPmInfo.yWrPmStats0;
+	rc.encPathPmInfo.yWrPmStats1     =
+		in->pmInfo.encPathPmInfo.yWrPmStats1;
+	rc.encPathPmInfo.cbcrWrPmStats0  =
 		in->pmInfo.encPathPmInfo.cbcrWrPmStats0;
-	rc->encPathPmInfo.cbcrWrPmStats1 =
+	rc.encPathPmInfo.cbcrWrPmStats1  =
 		in->pmInfo.encPathPmInfo.cbcrWrPmStats1;
-	rc->viewPathPmInfo.yWrPmStats0 = in->pmInfo.viewPathPmInfo.yWrPmStats0;
-	rc->viewPathPmInfo.yWrPmStats1 = in->pmInfo.viewPathPmInfo.yWrPmStats1;
-	rc->viewPathPmInfo.cbcrWrPmStats0 =
+	rc.viewPathPmInfo.yWrPmStats0    =
+		in->pmInfo.viewPathPmInfo.yWrPmStats0;
+	rc.viewPathPmInfo.yWrPmStats1    =
+		in->pmInfo.viewPathPmInfo.yWrPmStats1;
+	rc.viewPathPmInfo.cbcrWrPmStats0 =
 		in->pmInfo.viewPathPmInfo.cbcrWrPmStats0;
-	rc->viewPathPmInfo.cbcrWrPmStats1 =
-	    in->pmInfo.viewPathPmInfo.cbcrWrPmStats1;
+	rc.viewPathPmInfo.cbcrWrPmStats1 =
+		in->pmInfo.viewPathPmInfo.cbcrWrPmStats1;
+
+	return rc;
 }
 
 static void vfe_process_reg_update_irq(void)
@@ -1260,10 +1423,10 @@ static void vfe_process_reg_update_irq(void)
 	CDBG("vfe_process_reg_update_irq: ackPendingFlag is %d\n",
 	ctrl->vfeStartAckPendingFlag);
 	if (ctrl->vfeStartAckPendingFlag == TRUE) {
-		vfe_proc_ops(VFE_MSG_ID_START_ACK, NULL);
+		vfe_send_msg_no_payload(VFE_MSG_ID_START_ACK);
 		ctrl->vfeStartAckPendingFlag = FALSE;
 	} else
-		vfe_proc_ops(VFE_MSG_ID_UPDATE_ACK, NULL);
+		vfe_send_msg_no_payload(VFE_MSG_ID_UPDATE_ACK);
 }
 
 static void vfe_process_reset_irq(void)
@@ -1277,10 +1440,10 @@ static void vfe_process_reset_irq(void)
 
 	if (ctrl->vfeStopAckPending == TRUE) {
 		ctrl->vfeStopAckPending = FALSE;
-		vfe_proc_ops(VFE_MSG_ID_STOP_ACK, NULL);
+		vfe_send_msg_no_payload(VFE_MSG_ID_STOP_ACK);
 	} else {
 		vfe_set_default_reg_values();
-		vfe_proc_ops(VFE_MSG_ID_RESET_ACK, NULL);
+		vfe_send_msg_no_payload(VFE_MSG_ID_RESET_ACK);
 	}
 }
 
@@ -1307,90 +1470,74 @@ static void vfe_process_pingpong_irq(struct vfe_output_path *in,
 	}
 }
 
-static boolean vfe_send_video_msg(struct msm_vfe_resp *rp,
-		struct vfe_message *msg, void *data)
+static void vfe_send_output2_msg(
+	struct vfe_msg_output *pPayload)
 {
-	struct vfe_msg_output *pPayload = data;
+	/* unsigned long flags; */
+	struct vfe_message *msg;
 
+	msg = kzalloc(sizeof(struct vfe_message), GFP_ATOMIC);
+	if (!msg)
+		return;
+
+	/* fill message with right content. */
+	/* @todo This is causing issues, need further investigate */
+	/* spin_lock_irqsave(&ctrl->state_lock, flags); */
 	if (ctrl->vstate != VFE_STATE_ACTIVE)
-		return FALSE;
-	memcpy(&(msg->_u),
+		goto output2_msg_done;
+
+	msg->_d = VFE_MSG_ID_OUTPUT2;
+
+	memcpy(&(msg->_u.msgOutput2),
 		(void *)pPayload, sizeof(struct vfe_msg_output));
 
-	rp->phy.output_id = OUTPUT_TYPE_V;
-	CDBG("vfe_send_video_msg rp->type= %d\n", rp->type);
+	vfe_proc_ops(VFE_MSG_ID_OUTPUT2,
+		msg, sizeof(struct vfe_message));
 
-	vfe_addr_convert(&(rp->phy),
-			rp->type, msg,
-			&(rp->extdata), &(rp->extlen));
-	return TRUE;
+	ctrl->encPath.ackPending = TRUE;
+
+	if (!(ctrl->vfeRequestedSnapShotCount <= 3) &&
+			(ctrl->vfeOperationMode ==
+			 VFE_START_OPERATION_MODE_SNAPSHOT))
+		ctrl->encPath.ackPending = TRUE;
+
+output2_msg_done:
+	/* spin_unlock_irqrestore(&ctrl->state_lock, flags); */
+	return;
 }
 
-static boolean vfe_send_preview_msg(struct msm_vfe_resp *rp,
-		struct vfe_message *msg, void *data)
+static void vfe_send_output1_msg(
+	struct vfe_msg_output *pPayload)
 {
-	struct vfe_msg_output *pPayload = data;
+	/* unsigned long flags; */
+	struct vfe_message *msg;
 
+	msg = kzalloc(sizeof(struct vfe_message), GFP_ATOMIC);
+	if (!msg)
+		return;
+
+	/* @todo This is causing issues, need further investigate */
+	/* spin_lock_irqsave(&ctrl->state_lock, flags); */
 	if (ctrl->vstate != VFE_STATE_ACTIVE)
-		return FALSE;
+		goto output1_msg_done;
 
-	memcpy(&(msg->_u), (void *)pPayload, sizeof(struct vfe_msg_output));
+	msg->_d = VFE_MSG_ID_OUTPUT1;
+	memmove(&(msg->_u),
+		(void *)pPayload, sizeof(struct vfe_msg_output));
 
-	rp->phy.output_id = OUTPUT_TYPE_P;
-	CDBG("vfe_send_preview_msg rp->type= %d\n", rp->type);
+	vfe_proc_ops(VFE_MSG_ID_OUTPUT1,
+		msg, sizeof(struct vfe_message));
 
-	vfe_addr_convert(&(rp->phy),
-			rp->type, msg,
-			&(rp->extdata), &(rp->extlen));
+	ctrl->viewPath.ackPending = TRUE;
 
-	return TRUE;
-}
+	if (!(ctrl->vfeRequestedSnapShotCount <= 3) &&
+			(ctrl->vfeOperationMode ==
+			 VFE_START_OPERATION_MODE_SNAPSHOT))
+		ctrl->viewPath.ackPending = TRUE;
 
-
-static boolean vfe_send_thumbnail_msg(struct msm_vfe_resp *rp,
-		struct vfe_message *msg, void *data)
-{
-	struct vfe_msg_output *pPayload = data;
-
-	if (ctrl->vstate != VFE_STATE_ACTIVE)
-		return FALSE;
-
-	memcpy(&(msg->_u), (void *)pPayload, sizeof(struct vfe_msg_output));
-
-	rp->phy.output_id = OUTPUT_TYPE_T;
-	CDBG("vfe_send_thumbnail_msg rp->type= %d\n", rp->type);
-
-	if (ctrl->viewPath.snapshotPendingCount <= 1)
-		ctrl->viewPath.ackPending = FALSE;
-
-	vfe_addr_convert(&(rp->phy),
-			rp->type, msg,
-			&(rp->extdata), &(rp->extlen));
-	return TRUE;
-}
-
-static boolean vfe_send_mainimage_msg(struct msm_vfe_resp *rp,
-		struct vfe_message *msg, void *data)
-{
-	struct vfe_msg_output *pPayload = data;
-
-	if (ctrl->vstate != VFE_STATE_ACTIVE)
-		return FALSE;
-
-	memcpy(&(msg->_u), (void *)pPayload, sizeof(struct vfe_msg_output));
-
-	rp->phy.output_id = OUTPUT_TYPE_S;
-	CDBG("vfe_send_mainimage_msg rp->type= %d\n", rp->type);
-
-	if (ctrl->encPath.snapshotPendingCount <= 1) {
-		ctrl->encPath.ackPending = FALSE;
-	}
-
-	vfe_addr_convert(&(rp->phy),
-			rp->type, msg,
-			&(rp->extdata), &(rp->extlen));
-
-	return TRUE;
+output1_msg_done:
+	/* spin_unlock_irqrestore(&ctrl->state_lock, flags); */
+	return;
 }
 
 static void vfe_send_output_msg(boolean whichOutputPath,
@@ -1418,38 +1565,15 @@ static void vfe_send_output_msg(boolean whichOutputPath,
 
 	if (whichOutputPath) {
 		/* msgPayload.pmData = ctrl->vfePmData.encPathPmInfo; */
-		ctrl->encPath.ackPending = TRUE;
-
-		if (ctrl->vfeOperationMode == 0) {
-			if (ctrl->axiOutputMode ==
-				VFE_AXI_OUTPUT_MODE_Output1AndOutput2) {
-				/* video mode */
-				vfe_proc_ops(VFE_MSG_ID_OUTPUT_V, &msgPayload);
-			} else{
-				/* preview mode */
-				vfe_proc_ops(VFE_MSG_ID_OUTPUT_P, &msgPayload);
-			}
-		} else {
-			vfe_proc_ops(VFE_MSG_ID_OUTPUT_S, &msgPayload);
-		}
-
+		vfe_send_output2_msg(&msgPayload);
 	} else {
-		/* physical output1 path from vfe */
-		ctrl->viewPath.ackPending = TRUE;
-
-		if (ctrl->vfeOperationMode == 0) {
-			vfe_proc_ops(VFE_MSG_ID_OUTPUT_P, &msgPayload);
-			CDBG(" video mode display output.\n");
-
-		} else{
-			vfe_proc_ops(VFE_MSG_ID_OUTPUT_T, &msgPayload);
-			CDBG(" snapshot mode thumbnail output.\n");
-		}
+		/* msgPayload.pmData = ctrl->vfePmData.viewPathPmInfo; */
+		vfe_send_output1_msg(&msgPayload);
 	}
 }
 
-static void vfe_process_frame_done_irq_multi_frag(struct vfe_output_path_combo
-						  *in)
+static void vfe_process_frame_done_irq_multi_frag(
+	struct vfe_output_path_combo *in)
 {
 	uint32_t yAddress, cbcrAddress;
 	uint16_t idx;
@@ -1468,8 +1592,8 @@ static void vfe_process_frame_done_irq_multi_frag(struct vfe_output_path_combo
 
 		/* copy next frame to current frame. */
 		ptrSrc  = in->nextFrameAddrBuf;
-		ptrY = (uint32_t *)&in->yPath.addressBuffer[idx];
-		ptrCbcr = (uint32_t *)&in->cbcrPath.addressBuffer[idx];
+		ptrY    = (uint32_t *)&(in->yPath.addressBuffer[idx]);
+		ptrCbcr = (uint32_t *)&(in->cbcrPath.addressBuffer[idx]);
 
 		/* Copy Y address */
 		for (i = 0; i < in->fragCount; i++)
@@ -1497,15 +1621,15 @@ static void vfe_process_frame_done_irq_multi_frag(struct vfe_output_path_combo
 }
 
 static void vfe_process_frame_done_irq_no_frag_io(
-		struct vfe_output_path_combo *in,
-		uint32_t *pNextAddr,
+	struct vfe_output_path_combo *in, uint32_t *pNextAddr,
 	uint32_t *pdestRenderAddr)
 {
 	uint32_t busPingPongStatus;
 	uint32_t tempAddress;
 
 	/* 1. read hw status register. */
-	busPingPongStatus = readl(ctrl->vfebase + VFE_BUS_PINGPONG_STATUS);
+	busPingPongStatus =
+		readl(ctrl->vfebase + VFE_BUS_PINGPONG_STATUS);
 
 	CDBG("hardware status is 0x%x\n", busPingPongStatus);
 
@@ -1550,14 +1674,18 @@ static void vfe_process_frame_done_irq_no_frag_io(
 	}
 }
 
-static void vfe_process_frame_done_irq_no_frag(struct vfe_output_path_combo *in)
+static void vfe_process_frame_done_irq_no_frag(
+	struct vfe_output_path_combo *in)
 {
 	uint32_t addressToRender[2];
+	static uint32_t fcnt;
+
+	if (fcnt++ < 3)
+		return;
 
 	if (!in->ackPending) {
 		vfe_process_frame_done_irq_no_frag_io(in,
-						      in->nextFrameAddrBuf,
-						      addressToRender);
+			in->nextFrameAddrBuf, addressToRender);
 
 		/* use addressToRender to send out message. */
 		vfe_send_output_msg(in->whichOutputPath,
@@ -1585,7 +1713,8 @@ static void vfe_process_frame_done_irq_no_frag(struct vfe_output_path_combo *in)
 		in->snapshotPendingCount--;
 }
 
-static void vfe_process_output_path_irq(struct vfe_interrupt_status *irqstatus)
+static void vfe_process_output_path_irq(
+	struct vfe_interrupt_status *irqstatus)
 {
 	/* unsigned long flags; */
 
@@ -1594,28 +1723,25 @@ static void vfe_process_output_path_irq(struct vfe_interrupt_status *irqstatus)
 		if (ctrl->viewPath.multiFrag) {
 
 			if (irqstatus->viewCbcrPingpongIrq)
-				vfe_process_pingpong_irq(&
-							 (ctrl->viewPath.
-							  cbcrPath),
-							 ctrl->viewPath.
-							 fragCount);
+				vfe_process_pingpong_irq(
+					&(ctrl->viewPath.cbcrPath),
+					ctrl->viewPath.fragCount);
 
 			if (irqstatus->viewYPingpongIrq)
-				vfe_process_pingpong_irq(&
-							 (ctrl->viewPath.yPath),
-							 ctrl->viewPath.
-							 fragCount);
+				vfe_process_pingpong_irq(
+					&(ctrl->viewPath.yPath),
+					ctrl->viewPath.fragCount);
 
 			if (irqstatus->viewIrq)
-				vfe_process_frame_done_irq_multi_frag(&ctrl->
-								      viewPath);
+				vfe_process_frame_done_irq_multi_frag(
+					&ctrl->viewPath);
 
 		} else {
 			/* typical case for no fragment,
 			 only frame done irq is enabled. */
 			if (irqstatus->viewIrq)
-				vfe_process_frame_done_irq_no_frag(&ctrl->
-								   viewPath);
+				vfe_process_frame_done_irq_no_frag(
+					&ctrl->viewPath);
 		}
 	}
 
@@ -1623,25 +1749,22 @@ static void vfe_process_output_path_irq(struct vfe_interrupt_status *irqstatus)
 	if (irqstatus->anyOutput2PathIrqs) {
 		if (ctrl->encPath.multiFrag) {
 			if (irqstatus->encCbcrPingpongIrq)
-				vfe_process_pingpong_irq(&
-							 (ctrl->encPath.
-							  cbcrPath),
-							 ctrl->encPath.
-							 fragCount);
+				vfe_process_pingpong_irq(
+					&(ctrl->encPath.cbcrPath),
+					ctrl->encPath.fragCount);
 
 			if (irqstatus->encYPingpongIrq)
 				vfe_process_pingpong_irq(&(ctrl->encPath.yPath),
-							 ctrl->encPath.
-							 fragCount);
+				ctrl->encPath.fragCount);
 
 			if (irqstatus->encIrq)
-				vfe_process_frame_done_irq_multi_frag(&ctrl->
-								      encPath);
+				vfe_process_frame_done_irq_multi_frag(
+					&ctrl->encPath);
 
 		} else {
 			if (irqstatus->encIrq)
-				vfe_process_frame_done_irq_no_frag(&ctrl->
-								   encPath);
+				vfe_process_frame_done_irq_no_frag(
+					&ctrl->encPath);
 		}
 	}
 
@@ -1654,40 +1777,61 @@ static void vfe_process_output_path_irq(struct vfe_interrupt_status *irqstatus)
 			ctrl->vstate = VFE_STATE_IDLE;
 			/* spin_unlock_irqrestore(&ctrl->state_lock, flags); */
 
-			vfe_proc_ops(VFE_MSG_ID_SNAPSHOT_DONE, NULL);
-			vfe_camif_stop_immediately();
+			vfe_send_msg_no_payload(VFE_MSG_ID_SNAPSHOT_DONE);
 			vfe_prog_hw_testgen_cmd(VFE_TEST_GEN_STOP);
 			vfe_pm_stop();
 		}
 	}
 }
 
-static void __vfe_do_tasklet(struct isr_queue_cmd *qcmd)
+static void vfe_do_tasklet(unsigned long data)
 {
+	unsigned long flags;
+
+	struct isr_queue_cmd *qcmd = NULL;
+
+	CDBG("=== vfe_do_tasklet start === \n");
+
+	spin_lock_irqsave(&ctrl->tasklet_lock, flags);
+	qcmd = list_first_entry(&ctrl->tasklet_q,
+			struct isr_queue_cmd, list);
+
+	if (!qcmd) {
+		spin_unlock_irqrestore(&ctrl->tasklet_lock, flags);
+		return;
+	}
+
+	list_del(&qcmd->list);
+	spin_unlock_irqrestore(&ctrl->tasklet_lock, flags);
+
 	if (qcmd->vfeInterruptStatus.regUpdateIrq) {
-		CDBG("irq regUpdateIrq\n");
+		CDBG("irq	regUpdateIrq\n");
 		vfe_process_reg_update_irq();
 	}
 
 	if (qcmd->vfeInterruptStatus.resetAckIrq) {
-		CDBG("%s: process resetAckIrq\n", __func__);
+		CDBG("irq	resetAckIrq\n");
 		vfe_process_reset_irq();
 	}
 
-	if (ctrl->vstate != VFE_STATE_ACTIVE)
+	spin_lock_irqsave(&ctrl->state_lock, flags);
+	if (ctrl->vstate != VFE_STATE_ACTIVE) {
+		spin_unlock_irqrestore(&ctrl->state_lock, flags);
 		return;
+	}
+	spin_unlock_irqrestore(&ctrl->state_lock, flags);
 
 #if 0
 	if (qcmd->vfeInterruptStatus.camifEpoch1Irq)
-		vfe_proc_ops(VFE_MSG_ID_EPOCH1);
+		vfe_send_msg_no_payload(VFE_MSG_ID_EPOCH1);
 
 	if (qcmd->vfeInterruptStatus.camifEpoch2Irq)
-		vfe_proc_ops(VFE_MSG_ID_EPOCH2);
+		vfe_send_msg_no_payload(VFE_MSG_ID_EPOCH2);
 #endif /* Jeff */
 
 	/* next, check output path related interrupts. */
 	if (qcmd->vfeInterruptStatus.anyOutputPathIrqs) {
-		CDBG("irq: anyOutputPathIrqs\n");
+		CDBG("irq	anyOutputPathIrqs\n");
 		vfe_process_output_path_irq(&qcmd->vfeInterruptStatus);
 	}
 
@@ -1710,75 +1854,12 @@ static void __vfe_do_tasklet(struct isr_queue_cmd *qcmd)
 #endif /* Jeff */
 
 	if (qcmd->vfeInterruptStatus.camifSofIrq) {
-		CDBG("irq: camifSofIrq\n");
+		CDBG("irq	camifSofIrq\n");
 		vfe_process_camif_sof_irq();
 	}
-}
 
-static struct isr_queue_cmd *get_irq_cmd_nosync(void)
-{
-	int old_get = ctrl->irq_get++;
-	ctrl->irq_get = ctrl->irq_get % ARRAY_SIZE(ctrl->irqs);
-	if (ctrl->irq_get == ctrl->irq_put) {
-		pr_err("%s: out of irq command packets\n", __func__);
-		ctrl->irq_get = old_get;
-		return NULL;
-	}
-
-	return ctrl->irqs + old_get;
-}
-
-static struct isr_queue_cmd *next_irq_cmd(void)
-{
-	unsigned long flags;
-	struct isr_queue_cmd *cmd;
-	spin_lock_irqsave(&ctrl->irqs_lock, flags);
-	if (ctrl->irq_get == ctrl->irq_put) {
-		spin_unlock_irqrestore(&ctrl->irqs_lock, flags);
-		return NULL; /* already empty */
-	}
-	cmd = ctrl->irqs + ctrl->irq_put;
-	spin_unlock_irqrestore(&ctrl->irqs_lock, flags);
-	return cmd;
-}
-
-static void put_irq_cmd(void)
-{
-	unsigned long flags;
-	spin_lock_irqsave(&ctrl->irqs_lock, flags);
-	if (ctrl->irq_get == ctrl->irq_put) {
-		spin_unlock_irqrestore(&ctrl->irqs_lock, flags);
-		return; /* already empty */
-	}
-	ctrl->irq_put++;
-	ctrl->irq_put %= ARRAY_SIZE(ctrl->irqs);
-	spin_unlock_irqrestore(&ctrl->irqs_lock, flags);
-}
-
-static void vfe_do_tasklet(unsigned long data)
-{
-	int cnt = 0;
-	unsigned long flags;
-	struct isr_queue_cmd *qcmd = NULL;
-
-	spin_lock_irqsave(&msm_vfe_ctrl_lock, flags);
-	if (!ctrl) {
-		spin_unlock_irqrestore(&msm_vfe_ctrl_lock, flags);
-		return;
-	}
-
-	CDBG("%s\n", __func__);
-
-	while ((qcmd = next_irq_cmd())) {
-		__vfe_do_tasklet(qcmd);
-		put_irq_cmd();
-		cnt++;
-	}
-
-	if (cnt > ARRAY_SIZE(ctrl->irqs)/2)
-		pr_info("%s: serviced %d vfe interrupts\n", __func__, cnt);
-
-	spin_unlock_irqrestore(&msm_vfe_ctrl_lock, flags);
+	kfree(qcmd);
+	CDBG("=== vfe_do_tasklet end === \n");
 }
 
 DECLARE_TASKLET(vfe_tasklet, vfe_do_tasklet, 0);
@@ -1792,9 +1873,6 @@ static irqreturn_t vfe_parse_irq(int irq_num, void *data)
 
 	CDBG("vfe_parse_irq\n");
 
-	if (!atomic_read(&ctrl->vfe_serv_interrupt))
-		return IRQ_HANDLED;
-
 	vfe_read_irq_status(&irq);
 
 	if (irq.vfeIrqStatus == 0) {
@@ -1802,29 +1880,37 @@ static irqreturn_t vfe_parse_irq(int irq_num, void *data)
 		return IRQ_HANDLED;
 	}
 
+	qcmd = kzalloc(sizeof(struct isr_queue_cmd),
+		GFP_ATOMIC);
+	if (!qcmd) {
+		CDBG("vfe_parse_irq: qcmd malloc failed!\n");
+		return IRQ_HANDLED;
+	}
+
+	spin_lock_irqsave(&ctrl->ack_lock, flags);
+
 	if (ctrl->vfeStopAckPending)
-		irqStatusLocal = (VFE_IMASK_WHILE_STOPPING & irq.vfeIrqStatus);
+		irqStatusLocal =
+			(VFE_IMASK_WHILE_STOPPING & irq.vfeIrqStatus);
 	else
 		irqStatusLocal =
 			((ctrl->vfeImaskPacked | VFE_IMASK_ERROR_ONLY) &
 				irq.vfeIrqStatus);
 
-	spin_lock_irqsave(&ctrl->irqs_lock, flags);
-	qcmd = get_irq_cmd_nosync();
-	if (!qcmd) {
-		spin_unlock_irqrestore(&ctrl->irqs_lock, flags);
-		goto done;
-	}
+	spin_unlock_irqrestore(&ctrl->ack_lock, flags);
+
 	/* first parse the interrupt status to local data structures. */
-	vfe_parse_interrupt_status(&qcmd->vfeInterruptStatus, irqStatusLocal);
-	vfe_get_asf_frame_info(&qcmd->vfeAsfFrameInfo, &irq);
-	vfe_get_demosaic_frame_info(&qcmd->vfeBpcFrameInfo, &irq);
-	vfe_get_camif_status(&qcmd->vfeCamifStatusLocal, &irq);
-	vfe_get_performance_monitor_data(&qcmd->vfePmData, &irq);
-	spin_unlock_irqrestore(&ctrl->irqs_lock, flags);
+	qcmd->vfeInterruptStatus = vfe_parse_interrupt_status(irqStatusLocal);
+	qcmd->vfeAsfFrameInfo = vfe_get_asf_frame_info(&irq);
+	qcmd->vfeBpcFrameInfo = vfe_get_demosaic_frame_info(&irq);
+	qcmd->vfeCamifStatusLocal = vfe_get_camif_status(&irq);
+	qcmd->vfePmData = vfe_get_performance_monitor_data(&irq);
+
+	spin_lock_irqsave(&ctrl->tasklet_lock, flags);
+	list_add_tail(&qcmd->list, &ctrl->tasklet_q);
+	spin_unlock_irqrestore(&ctrl->tasklet_lock, flags);
 	tasklet_schedule(&vfe_tasklet);
 
-done:
 	/* clear the pending interrupt of the same kind.*/
 	writel(irq.vfeIrqStatus, ctrl->vfebase + VFE_IRQ_CLEAR);
 
@@ -1836,63 +1922,69 @@ int vfe_cmd_init(struct msm_vfe_callback *presp,
 {
 	struct resource	*vfemem, *vfeirq, *vfeio;
 	int rc;
-	struct msm_camera_sensor_info *s_info;
-	s_info = pdev->dev.platform_data;
-
-	pdev->resource = s_info->resource;
-	pdev->num_resources = s_info->num_resources;
 
 	vfemem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!vfemem) {
-		pr_err("%s: no mem resource\n", __func__);
+		CDBG("no mem resource?\n");
 		return -ENODEV;
 	}
 
 	vfeirq = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
 	if (!vfeirq) {
-		pr_err("%s: no irq resource\n", __func__);
+		CDBG("no irq resource?\n");
 		return -ENODEV;
 	}
 
 	vfeio = request_mem_region(vfemem->start,
 		resource_size(vfemem), pdev->name);
 	if (!vfeio) {
-		pr_err("%s: VFE region already claimed\n", __func__);
+		CDBG("VFE region already claimed\n");
 		return -EBUSY;
 	}
 
-	ctrl = kzalloc(sizeof(struct msm_vfe8x_ctrl), GFP_KERNEL);
+	ctrl =
+	kzalloc(sizeof(struct msm_vfe8x_ctrl), GFP_KERNEL);
 	if (!ctrl) {
-		pr_err("%s: out of memory\n", __func__);
 		rc = -ENOMEM;
 		goto cmd_init_failed1;
 	}
-	atomic_set(&ctrl->vfe_serv_interrupt, 0);
+
 	ctrl->vfeirq  = vfeirq->start;
 
 	ctrl->vfebase =
 		ioremap(vfemem->start, (vfemem->end - vfemem->start) + 1);
 	if (!ctrl->vfebase) {
-		pr_err("%s: ioremap failed\n", __func__);
 		rc = -ENOMEM;
 		goto cmd_init_failed2;
 	}
 
 	rc = request_irq(ctrl->vfeirq, vfe_parse_irq,
 		IRQF_TRIGGER_RISING, "vfe", 0);
-	if (rc < 0) {
-		pr_err("%s: request_irq(%d) failed\n", __func__, ctrl->vfeirq);
+	if (rc < 0)
 		goto cmd_init_failed2;
-	}
 
 	if (presp && presp->vfe_resp)
 		ctrl->resp = presp;
 	else {
-		pr_err("%s: no vfe_resp function\n", __func__);
-
-		rc = -EIO;
+		rc = -EINVAL;
 		goto cmd_init_failed3;
 	}
+
+	ctrl->extdata =
+		kmalloc(sizeof(struct vfe_frame_extra), GFP_KERNEL);
+	if (!ctrl->extdata) {
+		rc = -ENOMEM;
+		goto cmd_init_failed3;
+	}
+
+	spin_lock_init(&ctrl->ack_lock);
+	spin_lock_init(&ctrl->state_lock);
+	spin_lock_init(&ctrl->io_lock);
+
+	ctrl->extlen = sizeof(struct vfe_frame_extra);
+
+	spin_lock_init(&ctrl->tasklet_lock);
+	INIT_LIST_HEAD(&ctrl->tasklet_q);
 
 	ctrl->syncdata = sdata;
 	return 0;
@@ -1911,8 +2003,7 @@ cmd_init_failed1:
 void vfe_cmd_release(struct platform_device *dev)
 {
 	struct resource	*mem;
-	unsigned long flags;
-	atomic_set(&ctrl->vfe_serv_interrupt, 0);
+
 	disable_irq(ctrl->vfeirq);
 	free_irq(ctrl->vfeirq, 0);
 
@@ -1920,10 +2011,10 @@ void vfe_cmd_release(struct platform_device *dev)
 	mem = platform_get_resource(dev, IORESOURCE_MEM, 0);
 	release_mem_region(mem->start, (mem->end - mem->start) + 1);
 
-	spin_lock_irqsave(&msm_vfe_ctrl_lock, flags);
+	ctrl->extlen = 0;
+
+	kfree(ctrl->extdata);
 	kfree(ctrl);
-	ctrl = 0;
-	spin_unlock_irqrestore(&msm_vfe_ctrl_lock, flags);
 }
 
 void vfe_stats_af_stop(void)
@@ -1934,7 +2025,7 @@ void vfe_stats_af_stop(void)
 
 void vfe_stop(void)
 {
-	int spin_cnt = 0;
+	boolean vfeAxiBusy;
 	uint32_t vfeAxiStauts;
 
 	/* for reset hw modules, and send msg when reset_irq comes.*/
@@ -1953,12 +2044,13 @@ void vfe_stop(void)
 	vfe_program_axi_cmd(AXI_HALT);
 	vfe_prog_hw_testgen_cmd(VFE_TEST_GEN_STOP);
 
-	do {
+	vfeAxiBusy = TRUE;
+
+	while (vfeAxiBusy) {
 		vfeAxiStauts = vfe_read_axi_status();
-		spin_cnt++;
-	} while (!(vfeAxiStauts & AXI_STATUS_BUSY_MASK));
-	if (spin_cnt > 1)
-		pr_warning("%s: spin_cnt %d\n", __func__, spin_cnt);
+		if ((vfeAxiStauts & AXI_STATUS_BUSY_MASK) != 0)
+			vfeAxiBusy = FALSE;
+	}
 
 	vfe_program_axi_cmd(AXI_HALT_CLEAR);
 
@@ -2007,22 +2099,19 @@ int vfe_rgb_gamma_update(struct vfe_cmd_rgb_gamma_config *in)
 	case RGB_GAMMA_CH0_SELECTED:
 		ctrl->vfeGammaLutSel.ch0BankSelect ^= 1;
 		vfe_write_gamma_table(0,
-				      ctrl->vfeGammaLutSel.ch0BankSelect,
-				      in->table);
+			ctrl->vfeGammaLutSel.ch0BankSelect, in->table);
 		break;
 
 	case RGB_GAMMA_CH1_SELECTED:
 		ctrl->vfeGammaLutSel.ch1BankSelect ^= 1;
 		vfe_write_gamma_table(1,
-				      ctrl->vfeGammaLutSel.ch1BankSelect,
-				      in->table);
+			ctrl->vfeGammaLutSel.ch1BankSelect, in->table);
 		break;
 
 	case RGB_GAMMA_CH2_SELECTED:
 		ctrl->vfeGammaLutSel.ch2BankSelect ^= 1;
 		vfe_write_gamma_table(2,
-				      ctrl->vfeGammaLutSel.ch2BankSelect,
-				      in->table);
+			ctrl->vfeGammaLutSel.ch2BankSelect, in->table);
 		break;
 
 	case RGB_GAMMA_CH0_CH1_SELECTED:
@@ -2065,8 +2154,6 @@ int vfe_rgb_gamma_update(struct vfe_cmd_rgb_gamma_config *in)
 		break;
 
 	default:
-		pr_err("%s: invalid gamma channel %d\n", __func__,
-			in->channelSelect);
 		return -EINVAL;
 	} /* switch */
 
@@ -2117,8 +2204,6 @@ break;
 		break;
 
 	default:
-		pr_err("%s: invalid gamma channel %d\n", __func__,
-			in->channelSelect);
 		rc = -EINVAL;
 		break;
 	} /* switch */
@@ -2138,8 +2223,7 @@ void vfe_stats_wb_exp_ack(struct vfe_cmd_stats_wb_exp_ack *in)
 	ctrl->awbStatsControl.ackPending = FALSE;
 }
 
-
-void vfe_output_v_ack(struct vfe_cmd_output_ack *in)
+void vfe_output2_ack(struct vfe_cmd_output_ack *in)
 {
 	const uint32_t *psrc;
 	uint32_t *pdest;
@@ -2147,7 +2231,7 @@ void vfe_output_v_ack(struct vfe_cmd_output_ack *in)
 
 	pdest = ctrl->encPath.nextFrameAddrBuf;
 
-	CDBG("video_frame_ack: ack addr = 0x%x\n", in->ybufaddr[0]);
+	CDBG("output2_ack: ack addr = 0x%x\n", in->ybufaddr[0]);
 
 	psrc = in->ybufaddr;
 	for (i = 0; i < ctrl->encPath.fragCount; i++)
@@ -2160,14 +2244,11 @@ void vfe_output_v_ack(struct vfe_cmd_output_ack *in)
 	ctrl->encPath.ackPending = FALSE;
 }
 
-void vfe_output_p_ack(struct vfe_cmd_output_ack *in)
+void vfe_output1_ack(struct vfe_cmd_output_ack *in)
 {
 	const uint32_t *psrc;
 	uint32_t *pdest;
 	uint8_t i;
-
-	if (ctrl->axiOutputMode == VFE_AXI_OUTPUT_MODE_Output1AndOutput2) {
-		/* video mode, preview comes from output1 path */
 
 	pdest = ctrl->viewPath.nextFrameAddrBuf;
 
@@ -2180,25 +2261,11 @@ void vfe_output_p_ack(struct vfe_cmd_output_ack *in)
 		*pdest++ = *psrc++;
 
 	ctrl->viewPath.ackPending = FALSE;
-
-	} else { /* preview mode, preview comes from output2 path. */
-		pdest = ctrl->encPath.nextFrameAddrBuf;
-
-		psrc = in->ybufaddr;
-		for (i = 0; i < ctrl->encPath.fragCount; i++)
-			*pdest++ = *psrc++;
-
-		psrc = in->chromabufaddr;
-		for (i = 0; i < ctrl->encPath.fragCount; i++)
-			*pdest++ = *psrc++;
-
-		ctrl->encPath.ackPending = FALSE;
-
-	}
 }
 
 void vfe_start(struct vfe_cmd_start *in)
 {
+	unsigned long flags;
 	uint32_t  pmstatus = 0;
 	boolean rawmode;
 	uint32_t  demperiod = 0;
@@ -2275,9 +2342,8 @@ void vfe_start(struct vfe_cmd_start *in)
 
 	/* save variables to local. */
 	ctrl->vfeOperationMode = in->operationMode;
-	if (ctrl->vfeOperationMode == VFE_START_OPERATION_MODE_SNAPSHOT) {
-
-		update_axi_qos(MSM_AXI_QOS_SNAPSHOT);
+	if (ctrl->vfeOperationMode ==
+			VFE_START_OPERATION_MODE_SNAPSHOT) {
 		/* in snapshot mode, initialize snapshot count*/
 		ctrl->vfeSnapShotCount = in->snapshotCount;
 
@@ -2290,7 +2356,8 @@ void vfe_start(struct vfe_cmd_start *in)
 		/* Assumption is to have the same pattern and period for both
 		paths, if both paths are used. */
 		if (ctrl->viewPath.pathEnabled) {
-			ctrl->viewPath.snapshotPendingCount = in->snapshotCount;
+			ctrl->viewPath.snapshotPendingCount =
+				in->snapshotCount;
 
 			ctrl->vfeFrameSkipPattern =
 				ctrl->vfeFrameSkip.output1Pattern;
@@ -2299,15 +2366,15 @@ void vfe_start(struct vfe_cmd_start *in)
 		}
 
 		if (ctrl->encPath.pathEnabled) {
-			ctrl->encPath.snapshotPendingCount = in->snapshotCount;
+			ctrl->encPath.snapshotPendingCount =
+				in->snapshotCount;
 
 			ctrl->vfeFrameSkipPattern =
 				ctrl->vfeFrameSkip.output2Pattern;
 			ctrl->vfeFrameSkipPeriod =
 				ctrl->vfeFrameSkip.output2Period;
 		}
-	} else
-		update_axi_qos(MSM_AXI_QOS_PREVIEW);
+	}
 
 	/* enable color conversion for bayer sensor
 	if stats enabled, need to do color conversion. */
@@ -2351,9 +2418,10 @@ void vfe_start(struct vfe_cmd_start *in)
 
 	/* regardless module enabled or not, it does not hurt
 	 * to program the cositing mode. */
-	chromupcfg.chromaCositingForYCbCrInputs = in->yuvInputCositingMode;
+	chromupcfg.chromaCositingForYCbCrInputs =
+		in->yuvInputCositingMode;
 
-	writel(*(uint32_t *)&chromupcfg,
+	writel(*(uint32_t *)&(chromupcfg),
 		ctrl->vfebase + VFE_CHROMA_UPSAMPLE_CFG);
 
 	/* MISR to monitor the axi read. */
@@ -2390,14 +2458,16 @@ void vfe_start(struct vfe_cmd_start *in)
 		ctrl->vfeStatsPingPongReloadFlag = TRUE;
 	}
 
-	writel(VFE_REG_UPDATE_TRIGGER, ctrl->vfebase + VFE_REG_UPDATE_CMD);
+	writel(VFE_REG_UPDATE_TRIGGER,
+		ctrl->vfebase + VFE_REG_UPDATE_CMD);
 
 	/* program later than the reg update. */
 	vfe_reg_bus_cmd(&ctrl->vfeBusCmdLocal);
 
 	if ((in->inputSource ==
 			 VFE_START_INPUT_SOURCE_CAMIF) ||
-	    (in->inputSource == VFE_START_INPUT_SOURCE_TESTGEN))
+			(in->inputSource ==
+			 VFE_START_INPUT_SOURCE_TESTGEN))
 		writel(CAMIF_COMMAND_START, ctrl->vfebase + CAMIF_COMMAND);
 
 	/* start test gen if it is enabled */
@@ -2420,11 +2490,13 @@ void vfe_start(struct vfe_cmd_start *in)
 				rawmode = FALSE;
 		}
 
-		vfe_proc_ops(VFE_MSG_ID_START_ACK, NULL);
+		vfe_send_msg_no_payload(VFE_MSG_ID_START_ACK);
 		ctrl->vfeStartAckPendingFlag = FALSE;
 	}
 
+	spin_lock_irqsave(&ctrl->state_lock, flags);
 	ctrl->vstate = VFE_STATE_ACTIVE;
+	spin_unlock_irqrestore(&ctrl->state_lock, flags);
 }
 
 void vfe_la_update(struct vfe_cmd_la_config *in)
@@ -2589,7 +2661,8 @@ void vfe_camif_frame_update(struct vfe_cmds_camif_frame *in)
 		sizeof(cmd));
 }
 
-void vfe_color_correction_config(struct vfe_cmd_color_correction_config *in)
+void vfe_color_correction_config(
+	struct vfe_cmd_color_correction_config *in)
 {
 	struct vfe_color_correction_cfg cmd;
 
@@ -2705,7 +2778,8 @@ void vfe_demosaic_config(struct vfe_cmd_demosaic_config *in)
 		(uint32_t *)&cmd_bpc, sizeof(cmd_bpc));
 }
 
-void vfe_demux_channel_gain_update(struct vfe_cmd_demux_channel_gain_config *in)
+void vfe_demux_channel_gain_update(
+	struct vfe_cmd_demux_channel_gain_config *in)
 {
 	struct vfe_demux_cfg cmd;
 
@@ -2720,7 +2794,8 @@ void vfe_demux_channel_gain_update(struct vfe_cmd_demux_channel_gain_config *in)
 		(uint32_t *)&cmd, sizeof(cmd));
 }
 
-void vfe_demux_channel_gain_config(struct vfe_cmd_demux_channel_gain_config *in)
+void vfe_demux_channel_gain_config(
+	struct vfe_cmd_demux_channel_gain_config *in)
 {
 	struct vfe_demux_cfg cmd;
 
@@ -2776,8 +2851,8 @@ void vfe_asf_update(struct vfe_cmd_asf_update *in)
 
 	cmd.smoothEnable     = in->smoothFilterEnabled;
 	cmd.sharpMode        = in->sharpMode;
-	cmd.smoothCoeff0     = in->smoothCoefCenter;
-	cmd.smoothCoeff1     = in->smoothCoefSurr;
+	cmd.smoothCoeff1     = in->smoothCoefCenter;
+	cmd.smoothCoeff0     = in->smoothCoefSurr;
 	cmd.cropEnable       = in->cropEnable;
 	cmd.sharpThresholdE1 = in->sharpThreshE1;
 	cmd.sharpDegreeK1    = in->sharpK1;
@@ -2869,7 +2944,8 @@ void vfe_white_balance_config(struct vfe_cmd_white_balance_config *in)
 	struct vfe_wb_cfg cmd;
 	memset(&cmd, 0, sizeof(cmd));
 
-	ctrl->vfeModuleEnableLocal.whiteBalanceEnable = in->enable;
+	ctrl->vfeModuleEnableLocal.whiteBalanceEnable =
+		in->enable;
 
 	cmd.ch0Gain = in->ch0Gain;
 	cmd.ch1Gain = in->ch1Gain;
@@ -2919,7 +2995,8 @@ void vfe_roll_off_config(struct vfe_cmd_roll_off_config *in)
 	vfe_write_lens_roll_off_table(in);
 }
 
-void vfe_chroma_subsample_config(struct vfe_cmd_chroma_subsample_config *in)
+void vfe_chroma_subsample_config(
+	struct vfe_cmd_chroma_subsample_config *in)
 {
 	struct vfe_chromasubsample_cfg cmd;
 	memset(&cmd, 0, sizeof(cmd));
@@ -3140,8 +3217,8 @@ void vfe_stats_start_af(struct vfe_cmd_stats_af_start *in)
 	memset(&cmd, 0, sizeof(cmd));
 	memset(&cmd2, 0, sizeof(cmd2));
 
-	ctrl->vfeStatsCmdLocal.autoFocusEnable = in->enable;
-	ctrl->vfeImaskLocal.afPingpongIrq = TRUE;
+ctrl->vfeStatsCmdLocal.autoFocusEnable = in->enable;
+ctrl->vfeImaskLocal.afPingpongIrq = TRUE;
 
 	cmd.windowVOffset = in->windowVOffset;
 	cmd.windowHOffset = in->windowHOffset;
@@ -3284,7 +3361,8 @@ void vfe_axi_input_config(struct vfe_cmd_axi_input_config *in)
 	cmd.xSizeWord         = xSizeWord;
 	cmd.burstLength       = 1;
 	cmd.NumOfRows         = in->numOfRows;
-	cmd.RowIncrement = (in->rowIncrement + (axiInputPpw - 1)) / axiInputPpw;
+	cmd.RowIncrement      =
+		(in->rowIncrement + (axiInputPpw-1))/axiInputPpw;
 	cmd.mainUnpackHeight  = in->ySize;
 	cmd.mainUnpackWidth   = in->xSize - 1;
 	cmd.mainUnpackHbiSel  = (uint32_t)in->unpackHbi;
@@ -3320,10 +3398,25 @@ void vfe_axi_input_config(struct vfe_cmd_axi_input_config *in)
 	/* hacking code, put it to default value */
 	busPingpongRdIrqEnable = 0xf;
 
-	writel(busPingpongRdIrqEnable, ctrl->vfebase + VFE_BUS_PINGPONG_IRQ_EN);
+	writel(busPingpongRdIrqEnable,
+		ctrl->vfebase + VFE_BUS_PINGPONG_IRQ_EN);
 }
 
-void vfe_axi_output_config(struct vfe_cmd_axi_output_config *in)
+void vfe_stats_config(struct vfe_cmd_stats_setting *in)
+{
+	ctrl->afStatsControl.addressBuffer[0] = in->afBuffer[0];
+	ctrl->afStatsControl.addressBuffer[1] = in->afBuffer[1];
+	ctrl->afStatsControl.nextFrameAddrBuf = in->afBuffer[2];
+
+	ctrl->awbStatsControl.addressBuffer[0] = in->awbBuffer[0];
+	ctrl->awbStatsControl.addressBuffer[1] = in->awbBuffer[1];
+	ctrl->awbStatsControl.nextFrameAddrBuf = in->awbBuffer[2];
+
+	vfe_stats_setting(in);
+}
+
+void vfe_axi_output_config(
+	struct vfe_cmd_axi_output_config *in)
 {
 	/* local variable  */
 	uint32_t *pcircle;
@@ -3717,11 +3810,13 @@ void vfe_camif_config(struct vfe_cmd_camif_config *in)
 
 	/* determine if epoch interrupt needs to be enabled.  */
 	if ((in->epoch1.enable == TRUE) &&
-	    (in->epoch1.lineindex <= in->frame.linesPerFrame))
+			(in->epoch1.lineindex <=
+			 in->frame.linesPerFrame))
 		ctrl->vfeImaskLocal.camifEpoch1Irq = 1;
 
 	if ((in->epoch2.enable == TRUE) &&
-	    (in->epoch2.lineindex <= in->frame.linesPerFrame)) {
+			(in->epoch2.lineindex <=
+			 in->frame.linesPerFrame)) {
 		ctrl->vfeImaskLocal.camifEpoch2Irq = 1;
 	}
 
@@ -3798,6 +3893,8 @@ void vfe_get_hw_version(struct vfe_cmd_hw_version *out)
 
 static void vfe_reset_internal_variables(void)
 {
+	unsigned long flags;
+
 	/* local variables to program the hardware. */
 	ctrl->vfeImaskPacked = 0;
 	ctrl->vfeImaskCompositePacked = 0;
@@ -3827,11 +3924,14 @@ static void vfe_reset_internal_variables(void)
 	ctrl->vfeStartAckPendingFlag = FALSE;
 	ctrl->vfeStopAckPending = FALSE;
 	ctrl->vfeIrqCompositeMaskLocal.ceDoneSel = 0;
-	ctrl->vfeIrqCompositeMaskLocal.encIrqComMask = VFE_COMP_IRQ_BOTH_Y_CBCR;
+	ctrl->vfeIrqCompositeMaskLocal.encIrqComMask =
+		VFE_COMP_IRQ_BOTH_Y_CBCR;
 	ctrl->vfeIrqCompositeMaskLocal.viewIrqComMask =
 		VFE_COMP_IRQ_BOTH_Y_CBCR;
 
+	spin_lock_irqsave(&ctrl->state_lock, flags);
 	ctrl->vstate = VFE_STATE_IDLE;
+	spin_unlock_irqrestore(&ctrl->state_lock, flags);
 
 	ctrl->axiOutputMode = VFE_AXI_LAST_OUTPUT_MODE_ENUM;
 	/* 0 for continuous mode, 1 for snapshot mode */
@@ -3873,21 +3973,23 @@ static void vfe_reset_internal_variables(void)
 
 void vfe_reset(void)
 {
-	spin_lock_init(&msm_vfe_ctrl_lock);
 	vfe_reset_internal_variables();
 
-	atomic_set(&ctrl->vfe_serv_interrupt, 1);
 	ctrl->vfeImaskLocal.resetAckIrq = TRUE;
 	ctrl->vfeImaskPacked = vfe_irq_pack(ctrl->vfeImaskLocal);
 
 	/* disable all interrupts. */
-	writel(VFE_DISABLE_ALL_IRQS, ctrl->vfebase + VFE_IRQ_COMPOSITE_MASK);
+	writel(VFE_DISABLE_ALL_IRQS,
+		ctrl->vfebase + VFE_IRQ_COMPOSITE_MASK);
 
 	/* clear all pending interrupts*/
-	writel(VFE_CLEAR_ALL_IRQS, ctrl->vfebase + VFE_IRQ_CLEAR);
+	writel(VFE_CLEAR_ALL_IRQS,
+		ctrl->vfebase + VFE_IRQ_CLEAR);
 
 	/* enable reset_ack interrupt.  */
-	writel(ctrl->vfeImaskPacked, ctrl->vfebase + VFE_IRQ_MASK);
+	writel(ctrl->vfeImaskPacked,
+		ctrl->vfebase + VFE_IRQ_MASK);
 
-	writel(VFE_RESET_UPON_RESET_CMD, ctrl->vfebase + VFE_GLOBAL_RESET_CMD);
+	writel(VFE_RESET_UPON_RESET_CMD,
+		ctrl->vfebase + VFE_GLOBAL_RESET_CMD);
 }

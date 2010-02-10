@@ -1,25 +1,10 @@
-/* Copyright (c) 2009, Code Aurora Forum. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
+/*
+ * Copyright (C) 2008-2009 QUALCOMM Incorporated.
  */
 
 #include "mt9d112.h"
 
-
-struct register_address_value_pair const
+struct register_address_value_pair
 preview_snapshot_mode_reg_settings_array[] = {
 	{0x338C, 0x2703},
 	{0x3390, 800},    /* Output Width (P) = 640 */
@@ -54,7 +39,7 @@ preview_snapshot_mode_reg_settings_array[] = {
 	{0x338C, 0x2723},
 	{0x3390, 659},    /* Frame Lines (P) = 679 */
 	{0x338C, 0x2725},
-	{0x3390, 0x061B}, /* Line Length (P) = 1563 */
+	{0x3390, 0x0824}, /* Line Length (P) = 2084 */
 	{0x338C, 0x2727},
 	{0x3390, 0x2020},
 	{0x338C, 0x2729},
@@ -125,7 +110,7 @@ preview_snapshot_mode_reg_settings_array[] = {
 	{0x3390, 0x6408}, /* MODE_SPEC_EFFECTS(S) */
 };
 
-static struct register_address_value_pair const
+static struct register_address_value_pair
 noise_reduction_reg_settings_array[] = {
 	{0x338C, 0xA76D},
 	{0x3390, 0x0003},
@@ -307,11 +292,9 @@ static const struct mt9d112_i2c_reg_conf const sequencer_tbl[] = {
 
 struct mt9d112_reg mt9d112_regs = {
 	.prev_snap_reg_settings = &preview_snapshot_mode_reg_settings_array[0],
-	.prev_snap_reg_settings_size = ARRAY_SIZE(
-		preview_snapshot_mode_reg_settings_array),
+	.prev_snap_reg_settings_size = ARRAY_SIZE(preview_snapshot_mode_reg_settings_array),
 	.noise_reduction_reg_settings = &noise_reduction_reg_settings_array[0],
-	.noise_reduction_reg_settings_size = ARRAY_SIZE(
-		noise_reduction_reg_settings_array),
+	.noise_reduction_reg_settings_size = ARRAY_SIZE(noise_reduction_reg_settings_array),
 	.plltbl = pll_setup_tbl,
 	.plltbl_size = ARRAY_SIZE(pll_setup_tbl),
 	.stbl = sequencer_tbl,
