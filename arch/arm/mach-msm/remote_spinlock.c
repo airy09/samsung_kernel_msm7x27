@@ -13,121 +13,214 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
  * 02110-1301, USA.
- *
  */
 
+#include <linux/delay.h>
 #include <linux/err.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
-#include <linux/delay.h>
-
-#include <asm/system.h>
 
 #include <mach/remote_spinlock.h>
-#include <mach/dal.h>
 #include "smd_private.h"
-#include <linux/module.h>
 
 #define SMEM_SPINLOCK_COUNT 8
 #define SMEM_SPINLOCK_ARRAY_SIZE (SMEM_SPINLOCK_COUNT * sizeof(uint32_t))
 
-static int remote_spinlock_smem_init(int id, _remote_spinlock_t *lock)
+struct raw_remote_spinlock {
+	union {
+		volatile u32 lock;
+		struct {
+			volatile u8 self_lock;
+			volatile u8 other_lock;
+			volatile u8 next_yield;
+			u8 pad;
+		} dek;
+	};
+};
+
+static inline void __raw_remote_ex_spin_lock(struct raw_remote_spinlock *lock)
 {
-	_remote_spinlock_t spinlock_start;
+	unsigned long tmp;
+
+	asm volatile (
+		"1:	ldrex	%0, [%1]\n"
+		"	teq	%0, #0\n"
+		"	strexeq	%0, %2, [%1]\n"
+		"	teqeq	%0, #0\n"
+		"	bne	1b"
+		: "=&r" (tmp)
+		: "r" (&lock->lock), "r" (1)
+		: "cc");
+
+	smp_mb();
+}
+
+static inline void __raw_remote_ex_spin_unlock(struct raw_remote_spinlock *lock)
+{
+	smp_mb();
+
+	asm volatile (
+		"	str	%1, [%0]\n"
+		:
+		: "r" (&lock->lock), "r" (0)
+		: "cc");
+}
+
+static inline void __raw_remote_swp_spin_lock(struct raw_remote_spinlock *lock)
+{
+	unsigned long tmp;
+
+	asm volatile (
+		"1:	swp	%0, %2, [%1]\n"
+		"	teq	%0, #0\n"
+		"	bne	1b"
+		: "=&r" (tmp)
+		: "r" (&lock->lock), "r" (1)
+		: "cc");
+
+	smp_mb();
+}
+
+static inline void __raw_remote_swp_spin_unlock(struct raw_remote_spinlock *lock)
+{
+	smp_mb();
+
+	asm volatile (
+		"	str	%1, [%0]"
+		:
+		: "r" (&lock->lock), "r" (0)
+		: "cc");
+}
+
+#define DEK_LOCK_REQUEST		1
+#define DEK_LOCK_YIELD			(!DEK_LOCK_REQUEST)
+#define DEK_YIELD_TURN_SELF		0
+static void __raw_remote_dek_spin_lock(struct raw_remote_spinlock *lock)
+{
+	lock->dek.self_lock = DEK_LOCK_REQUEST;
+
+	while (lock->dek.other_lock) {
+
+		if (lock->dek.next_yield == DEK_YIELD_TURN_SELF)
+			lock->dek.self_lock = DEK_LOCK_YIELD;
+
+		while (lock->dek.other_lock)
+			;
+
+		lock->dek.self_lock = DEK_LOCK_REQUEST;
+	}
+	lock->dek.next_yield = DEK_YIELD_TURN_SELF;
+
+	smp_mb();
+}
+
+static void __raw_remote_dek_spin_unlock(struct raw_remote_spinlock *lock)
+{
+	smp_mb();
+
+	lock->dek.self_lock = DEK_LOCK_YIELD;
+}
+
+#if defined(CONFIG_MSM_REMOTE_SPINLOCK_DEKKERS)
+/* Use Dekker's algorithm when LDREX/STREX and SWP are unavailable for
+ * shared memory */
+#define _raw_remote_spin_lock(lock)	__raw_remote_dek_spin_lock(lock)
+#define _raw_remote_spin_unlock(lock)	__raw_remote_dek_spin_unlock(lock)
+#elif defined(CONFIG_MSM_REMOTE_SPINLOCK_SWP)
+/* Use SWP-based locks when LDREX/STREX are unavailable for shared memory. */
+#define _raw_remote_spin_lock(lock)	__raw_remote_swp_spin_lock(lock)
+#define _raw_remote_spin_unlock(lock)	__raw_remote_swp_spin_unlock(lock)
+#else
+/* Use LDREX/STREX for shared memory locking, when available */
+#define _raw_remote_spin_lock(lock)	__raw_remote_ex_spin_lock(lock)
+#define _raw_remote_spin_unlock(lock)	__raw_remote_ex_spin_unlock(lock)
+#endif
+
+void _remote_spin_lock(remote_spinlock_t *lock)
+{
+	_raw_remote_spin_lock(lock->remote);
+}
+EXPORT_SYMBOL(_remote_spin_lock);
+
+void _remote_spin_unlock(remote_spinlock_t *lock)
+{
+	_raw_remote_spin_unlock(lock->remote);
+}
+EXPORT_SYMBOL(_remote_spin_unlock);
+
+static int remote_spin_lock_smem_init(remote_spinlock_t *lock, int id)
+{
+	void *start;
 
 	if (id >= SMEM_SPINLOCK_COUNT)
 		return -EINVAL;
 
-	spinlock_start = smem_alloc(SMEM_SPINLOCK_ARRAY,
-				    SMEM_SPINLOCK_ARRAY_SIZE);
-	if (spinlock_start == NULL)
+	start = smem_alloc(SMEM_SPINLOCK_ARRAY, SMEM_SPINLOCK_ARRAY_SIZE);
+	if (start == NULL)
 		return -ENXIO;
 
-	*lock = spinlock_start + id;
-
+	lock->remote =
+		(struct raw_remote_spinlock *)(start + id * sizeof(uint32_t));
 	return 0;
 }
 
-static int
-remote_spinlock_dal_init(const char *chunk_name, _remote_spinlock_t *lock)
-{
-	void *dal_smem_start, *dal_smem_end;
-	uint32_t dal_smem_size;
-	struct dal_chunk_header *cur_header;
+#define DAL_CHUNK_NAME_LENGTH 12
+struct dal_chunk_header {
+	uint32_t size;
+	char name[DAL_CHUNK_NAME_LENGTH];
+	uint32_t lock;
+	uint32_t reserved;
+	uint32_t type;
+	uint32_t version;
+};
 
-	if (!chunk_name)
+static int remote_spin_lock_dal_init(remote_spinlock_t *lock, const char *name)
+{
+	unsigned long start;
+	unsigned long end;
+	unsigned size;
+	struct dal_chunk_header *cur_hdr;
+
+	if (!name)
 		return -EINVAL;
 
-	dal_smem_start = smem_get_entry(SMEM_DAL_AREA, &dal_smem_size);
-	if (!dal_smem_start)
+	start = (unsigned long)smem_item(SMEM_DAL_AREA, &size);
+	if (!start)
 		return -ENXIO;
 
-	dal_smem_end = dal_smem_start + dal_smem_size;
+	end = start + size;
 
 	/* Find first chunk header */
-	cur_header = (struct dal_chunk_header *)
-			(((uint32_t)dal_smem_start + (4095)) & ~4095);
-	*lock = NULL;
-	while (cur_header->size != 0
-		&& ((uint32_t)(cur_header + 1) < (uint32_t)dal_smem_end)) {
-
-		/* Check if chunk name matches */
-		if (!strncmp(cur_header->name, chunk_name,
-						DAL_CHUNK_NAME_LENGTH)) {
-			*lock = (_remote_spinlock_t)&cur_header->lock;
+	cur_hdr = (struct dal_chunk_header *)ALIGN(start, 4096);
+	lock->remote = NULL;
+	while (((unsigned long)(cur_hdr + 1) <= end) && (cur_hdr->size != 0)) {
+		if (!strncmp(cur_hdr->name, name, DAL_CHUNK_NAME_LENGTH)) {
+			lock->remote =
+				(struct raw_remote_spinlock *)&cur_hdr->lock;
 			return 0;
 		}
-		cur_header = (void *)cur_header + cur_header->size;
+		cur_hdr = (void *)cur_hdr + cur_hdr->size;
 	}
 
-	pr_err("%s: DAL remote lock \"%s\" not found.\n", __func__,
-		chunk_name);
+	pr_err("%s: DAL remote spin lock '%s' not found.\n", __func__, name);
 	return -EINVAL;
 }
 
-int _remote_spin_lock_init(remote_spinlock_id_t id, _remote_spinlock_t *lock)
+int _remote_spin_lock_init(remote_spinlock_t *lock, const char *name)
 {
-	BUG_ON(id == NULL);
+	BUG_ON(name == NULL);
 
-	if (id[0] == 'D' && id[1] == ':') {
-		/* DAL chunk name starts after "D:" */
-		return remote_spinlock_dal_init(&id[2], lock);
-	} else if (id[0] == 'S' && id[1] == ':') {
-		/* Single-digit SMEM lock ID follows "S:" */
-		BUG_ON(id[3] != '\0');
-		return remote_spinlock_smem_init((((uint8_t)id[2])-'0'), lock);
-	} else
-		return -EINVAL;
-}
-
-int _remote_mutex_init(struct remote_mutex_id *id, _remote_mutex_t *lock)
-{
-	BUG_ON(id == NULL);
-
-	lock->delay_us = id->delay_us;
-	return _remote_spin_lock_init(id->r_spinlock_id, &(lock->r_spinlock));
-}
-EXPORT_SYMBOL(_remote_mutex_init);
-
-void _remote_mutex_lock(_remote_mutex_t *lock)
-{
-	while (!_remote_spin_trylock(&(lock->r_spinlock))) {
-		if (lock->delay_us >= 1000)
-			msleep(lock->delay_us/1000);
-		else
-			udelay(lock->delay_us);
+	/* remote spinlocks can be one of two formats:
+	 * D:<dal chunk name>
+	 * S:<single digit smem lock id>
+	 */
+	if (!strncmp(name, "D:", 2)) {
+		return remote_spin_lock_dal_init(lock, &name[2]);
+	} else if (!strncmp(name, "S:", 2)) {
+		BUG_ON(name[3] != '\0');
+		return remote_spin_lock_smem_init(lock, (uint8_t)(name[2]-'0'));
 	}
-}
-EXPORT_SYMBOL(_remote_mutex_lock);
 
-void _remote_mutex_unlock(_remote_mutex_t *lock)
-{
-	_remote_spin_unlock(&(lock->r_spinlock));
+	return -EINVAL;
 }
-EXPORT_SYMBOL(_remote_mutex_unlock);
-
-int _remote_mutex_trylock(_remote_mutex_t *lock)
-{
-	return _remote_spin_trylock(&(lock->r_spinlock));
-}
-EXPORT_SYMBOL(_remote_mutex_trylock);
+EXPORT_SYMBOL(_remote_spin_lock_init);
