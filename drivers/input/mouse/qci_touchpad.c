@@ -39,7 +39,6 @@
 #define TOUCHPAD_NAME                "PS2 Touchpad"
 #define TOUCHPAD_DEVICE             "/i2c/input1"
 #define TOUCHPAD_CMD_ENABLE             0xF4
-#define TOUCHPAD_INIT_DELAY_MS    100
 
 static int __devinit qcitp_probe(struct i2c_client *client,
 	const struct i2c_device_id *id);
@@ -114,7 +113,7 @@ static const struct i2c_device_id qcitp_idtable[] = {
 
 MODULE_DEVICE_TABLE(i2c, qcitp_idtable);
 #ifdef CONFIG_PM
-static const struct dev_pm_ops qcitp_pm_ops = {
+static struct dev_pm_ops qcitp_pm_ops = {
 	.suspend  = qcitp_suspend,
 	.resume   = qcitp_resume,
 };
@@ -202,7 +201,7 @@ static int __devinit qcitp_probe(struct i2c_client *client,
 
 	/* Enable mouse */
 	i2c_smbus_write_byte(client, TOUCHPAD_CMD_ENABLE);
-	msleep(TOUCHPAD_INIT_DELAY_MS);
+	mdelay(100);
 	i2c_smbus_read_byte(client);
 	/*allocate and register input device*/
 	context->qcitp_dev = input_allocate_device();
