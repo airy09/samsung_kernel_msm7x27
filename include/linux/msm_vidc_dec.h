@@ -65,7 +65,7 @@
 /* Command is not implemented by the driver.  */
 #define VDEC_S_BUSY	(VDEC_S_BASE + 13)
 
-#define VDEC_INTF_VER	1
+#define VDEC_INTF_VER   	1
 #define VDEC_MSG_BASE	0x0000000
 /* Codes to identify asynchronous message responses and events that driver
   wants to communicate to the app.*/
@@ -106,8 +106,8 @@
 #define VDEC_IOCTL_MAGIC 'v'
 
 struct vdec_ioctl_msg {
-	void __user *in;
-	void __user *out;
+	void *inputparam;
+	void *outputparam;
 };
 
 /* CMD params: InputParam:enum vdec_codec
@@ -201,12 +201,6 @@ struct vdec_ioctl_msg {
 #define VDEC_IOCTL_GET_NUMBER_INSTANCES \
 	_IOR(VDEC_IOCTL_MAGIC, 27, struct vdec_ioctl_msg)
 
-#define VDEC_IOCTL_SET_PICTURE_ORDER \
-	_IOW(VDEC_IOCTL_MAGIC, 28, struct vdec_ioctl_msg)
-
-#define VDEC_IOCTL_SET_FRAME_RATE \
-	_IOW(VDEC_IOCTL_MAGIC, 29, struct vdec_ioctl_msg)
-
 enum vdec_picture {
 	PICTURE_TYPE_I,
 	PICTURE_TYPE_P,
@@ -226,17 +220,17 @@ struct vdec_allocatorproperty {
 	uint32_t mincount;
 	uint32_t maxcount;
 	uint32_t actualcount;
-	size_t buffer_size;
+	uint32_t buffer_size;
 	uint32_t alignment;
 	uint32_t buf_poolid;
 };
 
 struct vdec_bufferpayload {
-	void __user *bufferaddr;
-	size_t buffer_len;
+	uint8_t *bufferaddr;
+	uint32_t buffer_len;
 	int pmem_fd;
-	size_t offset;
-	size_t mmaped_size;
+	uint32_t offset;
+	uint32_t mmaped_size;
 };
 
 struct vdec_setbuffer_cmd {
@@ -469,11 +463,6 @@ enum vdec_output_fromat {
 	VDEC_YUV_FORMAT_TILE_4x2 = 0x2
 };
 
-enum vdec_output_order {
-	VDEC_ORDER_DISPLAY = 0x1,
-	VDEC_ORDER_DECODE = 0x2
-};
-
 struct vdec_picsize {
 	uint32_t frame_width;
 	uint32_t frame_height;
@@ -482,39 +471,40 @@ struct vdec_picsize {
 };
 
 struct vdec_seqheader {
-	void __user *ptr_seqheader;
-	size_t seq_header_len;
+	uint8_t *ptr_seqheader;
+	uint32_t seq_header_len;
 	int pmem_fd;
-	size_t pmem_offset;
+	uint32_t pmem_offset;
 };
 
 struct vdec_mberror {
-	void __user *ptr_errormap;
-	size_t err_mapsize;
+	uint8_t *ptr_errormap;
+	uint32_t err_mapsize;
 };
 
 struct vdec_input_frameinfo {
-	void __user *bufferaddr;
-	size_t offset;
-	size_t datalen;
+	uint8_t *bufferaddr;
+	uint32_t offset;
+	uint32_t datalen;
 	uint32_t flags;
 	int64_t timestamp;
 	void *client_data;
 	int pmem_fd;
-	size_t pmem_offset;
+	uint32_t pmem_offset;
 };
 
 struct vdec_framesize {
-	uint32_t   left;
-	uint32_t   top;
-	uint32_t   right;
-	uint32_t   bottom;
+	uint32_t   n_left;
+	uint32_t   n_top;
+	uint32_t   n_right;
+	uint32_t   n_bottom;
 };
 
 struct vdec_output_frameinfo {
-	void __user *bufferaddr;
-	size_t offset;
-	size_t len;
+	uint8_t *phy_addr;
+	uint8_t *bufferaddr;
+	uint32_t offset;
+	uint32_t len;
 	uint32_t flags;
 	int64_t time_stamp;
 	void *client_data;
@@ -531,12 +521,6 @@ struct vdec_msginfo {
 	uint32_t status_code;
 	uint32_t msgcode;
 	union vdec_msgdata msgdata;
-	size_t msgdatasize;
+	uint32_t msgdatasize;
 };
-
-struct vdec_framerate {
-	unsigned long fps_denominator;
-	unsigned long fps_numerator;
-};
-
 #endif /* end of macro _VDECDECODER_H_ */
