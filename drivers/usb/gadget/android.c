@@ -208,7 +208,7 @@ static int product_matches_functions(struct android_usb_product *p)
 {
 	struct usb_function		*f;
 	list_for_each_entry(f, &android_config_driver.functions, list) {
-		if (product_has_function(p, f) == !!f->hidden)
+		if (product_has_function(p, f) == !!f->disabled)
 			return 0;
 	}
 	return 1;
@@ -299,6 +299,7 @@ static struct usb_composite_driver android_usb_driver = {
 	.dev		= &device_desc,
 	.strings	= dev_strings,
 	.bind		= android_bind,
+	.enable_function = android_enable_function,
 };
 
 void android_register_function(struct android_usb_function *f)
@@ -312,7 +313,7 @@ void android_register_function(struct android_usb_function *f)
 	/* bind our functions if they have all registered
 	 * and the main driver has bound.
 	 */
-	if (dev->config && _registered_function_count == dev->num_functions)
+	if (dev && dev->config && _registered_function_count == dev->num_functions)
 		bind_functions(dev);
 }
 
@@ -322,8 +323,37 @@ void android_enable_function(struct usb_function *f, int enable)
 	int disable = !enable;
 	int product_id;
 
-	if (!!f->hidden != disable) {
-		f->hidden = disable;
+	if (!!f->disabled != disable) {
+		usb_function_set_enabled(f, !disable);
+
+#ifdef CONFIG_USB_ANDROID_RNDIS
+		if (!strcmp(f->name, "rndis")) {
+			struct usb_function		*func;
+
+			/* We need to specify the COMM class in the device descriptor
+			 * if we are using RNDIS.
+			 */
+			if (enable)
+#ifdef CONFIG_USB_ANDROID_RNDIS_WCEIS
+				dev->cdev->desc.bDeviceClass = USB_CLASS_WIRELESS_CONTROLLER;
+#else
+				dev->cdev->desc.bDeviceClass = USB_CLASS_COMM;
+#endif
+			else
+				dev->cdev->desc.bDeviceClass = USB_CLASS_PER_INTERFACE;
+
+			/* Windows does not support other interfaces when RNDIS is enabled,
+			 * so we disable UMS when RNDIS is on.
+			 */
+			list_for_each_entry(func, &android_config_driver.functions, list) {
+				if (!strcmp(func->name, "usb_mass_storage")) {
+					usb_function_set_enabled(f, !enable);
+					break;
+				}
+			}
+		}
+#endif
+
 		product_id = get_product_id(dev);
 		device_desc.idProduct = __constant_cpu_to_le16(product_id);
 		if (dev->cdev)
