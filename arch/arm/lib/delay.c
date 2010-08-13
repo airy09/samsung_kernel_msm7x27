@@ -3,12 +3,8 @@
  *
  *  Copyright (C) 1995, 1996 Russell King
  *  Copyright (c) 2010, Code Aurora Forum. All rights reserved.
-<<<<<<< HEAD
  *  Copyright (C) 1993 Linus Torvalds
  *  Copyright (C) 1997 Martin Mares <mj@atrey.karlin.mff.cuni.cz>
- *  Copyright (C) 2005-2006 Atmel Corporation
-=======
->>>>>>> 8d5868d... arm: Translate delay.S into (mostly) C
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -16,22 +12,11 @@
  */
 #include <linux/module.h>
 #include <linux/delay.h>
-<<<<<<< HEAD
-#include <linux/timex.h>
 
 /*
  * Oh, if only we had a cycle counter...
  */
 void delay_loop(unsigned long loops)
-=======
-
-/*
- * loops = usecs * HZ * loops_per_jiffy / 1000000
- *
- * Oh, if only we had a cycle counter...
- */
-void __delay(unsigned long loops)
->>>>>>> 8d5868d... arm: Translate delay.S into (mostly) C
 {
 	asm volatile(
 	"1:	subs %0, %0, #1 \n"
@@ -40,23 +25,6 @@ void __delay(unsigned long loops)
 	: "r" (loops)
 	);
 }
-<<<<<<< HEAD
-
-#ifdef ARCH_HAS_READ_CURRENT_TIMER
-/*
- * Assuming read_current_timer() is monotonically increasing
- * across calls.
- */
-void read_current_timer_delay_loop(unsigned long loops)
-{
-	unsigned long bclock, now;
-
-	read_current_timer(&bclock);
-	do {
-		read_current_timer(&now);
-	} while ((now - bclock) < loops);
-}
-#endif
 
 static void (*delay_fn)(unsigned long) = delay_loop;
 
@@ -72,8 +40,6 @@ void __delay(unsigned long loops)
 {
 	delay_fn(loops);
 }
-=======
->>>>>>> 8d5868d... arm: Translate delay.S into (mostly) C
 EXPORT_SYMBOL(__delay);
 
 /*
@@ -101,10 +67,6 @@ EXPORT_SYMBOL(__const_udelay);
  */
 void __udelay(unsigned long usecs)
 {
-<<<<<<< HEAD
-	__const_udelay(usecs * ((2199023UL*HZ)>>11));
-=======
 	__const_udelay(usecs * ((2199023*HZ)>>11));
->>>>>>> 8d5868d... arm: Translate delay.S into (mostly) C
 }
 EXPORT_SYMBOL(__udelay);
