@@ -1,13 +1,29 @@
-/* Copyright (c) 2010-2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *     * Redistributions of source code must retain the above copyright
+ *       notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above
+ *       copyright notice, this list of conditions and the following
+ *       disclaimer in the documentation and/or other materials provided
+ *       with the distribution.
+ *     * Neither the name of Code Aurora Forum, Inc. nor the names of its
+ *       contributors may be used to endorse or promote products derived
+ *       from this software without specific prior written permission.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+ * BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+ * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
+ * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
@@ -61,7 +77,6 @@
 /* Max voc packet size */
 #define MVS_MAX_VOC_PKT_SIZE 320
 
-#define VOIP_MAX_Q_LEN 20
 #define MVS_MAX_Q_LEN  8
 #define RPC_TYPE_REQUEST 0
 #define RPC_TYPE_REPLY 1
@@ -302,45 +317,6 @@ struct audio_mvs_info_type {
 
 };
 
-struct audio_voip_info_type {
-	enum audio_mvs_state_type state;
-	enum audio_mvs_state_type playback_state;
-	enum audio_mvs_state_type capture_state;
-
-	unsigned int pcm_playback_size;
-	unsigned int pcm_count;
-	unsigned int pcm_playback_irq_pos;	/* IRQ position */
-	unsigned int pcm_playback_buf_pos;	/* position in buffer */
-
-	unsigned int pcm_capture_size;
-	unsigned int pcm_capture_count;
-	unsigned int pcm_capture_irq_pos;	/* IRQ position */
-	unsigned int pcm_capture_buf_pos;	/* position in buffer */
-
-	struct snd_pcm_substream *playback_substream;
-	struct snd_pcm_substream *capture_substream;
-
-	struct audio_mvs_buffer in[VOIP_MAX_Q_LEN];
-	uint32_t in_read;
-	uint32_t in_write;
-
-	struct audio_mvs_buffer out[VOIP_MAX_Q_LEN];
-	uint32_t out_read;
-	uint32_t out_write;
-
-	wait_queue_head_t out_wait;
-	wait_queue_head_t in_wait;
-
-	struct mutex lock;
-	struct mutex prepare_lock;
-
-	struct wake_lock suspend_lock;
-	struct wake_lock idle_lock;
-	int playback_start;
-	int capture_start;
-	int instance;
-};
-
 enum msm_audio_pcm_frame_type {
 	MVS_AMR_SPEECH_GOOD,	/* Good speech frame              */
 	MVS_AMR_SPEECH_DEGRADED,	/* Speech degraded                */
@@ -360,9 +336,7 @@ struct msm_audio_mvs_config {
 	uint32_t mvs_mode;
 	uint32_t bit_rate;
 };
-
-extern struct snd_soc_dai_driver msm_mvs_dais[2];
+extern struct snd_soc_dai msm_mvs_dais[2];
 extern struct snd_soc_codec_device soc_codec_dev_msm_mvs;
-extern struct snd_soc_platform_driver msm_mvs_soc_platform;
-extern struct snd_soc_platform_driver msm_voip_soc_platform;
+extern struct snd_soc_platform msm_mvs_soc_platform;
 #endif /* __MSM_AUDIO_MVS_H */

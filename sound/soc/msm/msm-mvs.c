@@ -407,10 +407,6 @@ static int msm_pcm_open(struct snd_pcm_substream *substream)
 				SNDRV_PCM_HW_PARAM_PERIODS);
 		if (ret < 0) {
 			MM_ERR("snd_pcm_hw_constraint_integer failed\n");
-			if (!audio->instance) {
-				msm_rpc_close(audio->rpc_endpt);
-				audio->rpc_endpt = NULL;
-			}
 			goto err;
 		}
 			audio->instance++;
@@ -562,30 +558,29 @@ static int msm_pcm_close(struct snd_pcm_substream *substream)
 						 MVS_RELEASE_PROC);
 			audio->rpc_status = RPC_STATUS_FAILURE;
 			rc = msm_rpc_write(audio->rpc_endpt, &release_msg,
-					sizeof(release_msg));
+						 sizeof(release_msg));
 			if (rc >= 0) {
 				MM_DBG("RPC write for release done\n");
 				rc = wait_event_timeout(audio->wait,
-						(audio->rpc_status !=
+					 (audio->rpc_status !=
 						 RPC_STATUS_FAILURE), 1 * HZ);
 				if (rc != 0) {
 					MM_DBG
 					("Wait event for release succeeded\n");
 					rc = 0;
-					kthread_stop(audio->task);
-					audio->prepare_ack = 0;
-					audio->task = NULL;
-					del_timer_sync(&audio->timer);
 				} else {
 					MM_ERR
 					("Wait event for release failed %d\n",
 						 rc);
 				}
-			} else	{
+			} else
 				MM_ERR("RPC write for release failed %d\n", rc);
-			}
+			kthread_stop(audio->task);
+			audio->state = AUDIO_MVS_CLOSED;
+			audio->prepare_ack = 0;
+			audio->task = NULL;
+			del_timer_sync(&audio->timer);
 		}
-		audio->state = AUDIO_MVS_CLOSED;
 		msm_rpc_close(audio->rpc_endpt);
 		audio->rpc_endpt = NULL;
 	}
@@ -837,11 +832,16 @@ static struct snd_pcm_ops msm_mvs_pcm_ops = {
 	.pointer = msm_pcm_pointer,
 
 };
-
-static int msm_pcm_new(struct snd_soc_pcm_runtime *rtd)
+static int msm_pcm_remove(struct platform_device *devptr)
 {
-	int   i, ret, offset = 0;
-	struct snd_pcm *pcm = rtd->pcm;
+	return 0;
+}
+
+static int msm_pcm_new(struct snd_card *card,
+			struct snd_soc_dai *codec_dai,
+			struct snd_pcm *pcm)
+{
+	int   i, offset = 0;
 
 	audio_mvs_info.mem_chunk = kmalloc(
 		2 * MVS_MAX_VOC_PKT_SIZE * MVS_MAX_Q_LEN, GFP_KERNEL);
@@ -857,7 +857,7 @@ static int msm_pcm_new(struct snd_soc_pcm_runtime *rtd)
 		}
 		for (i = 0; i < MVS_MAX_Q_LEN; i++) {
 			audio_mvs_info.out[i].voc_pkt =
-				audio_mvs_info.mem_chunk + offset;
+			audio_mvs_info.mem_chunk + offset;
 			offset = offset + MVS_MAX_VOC_PKT_SIZE;
 		}
 		audio_mvs_info.playback_substream = NULL;
@@ -866,46 +866,16 @@ static int msm_pcm_new(struct snd_soc_pcm_runtime *rtd)
 		MM_ERR("MSM MVS kmalloc failed\n");
 		return -ENODEV;
 	}
-
-
-	ret = snd_pcm_new_stream(pcm, SNDRV_PCM_STREAM_PLAYBACK, 1);
-	if (ret)
-		return ret;
-	ret = snd_pcm_new_stream(pcm, SNDRV_PCM_STREAM_CAPTURE, 1);
-	if (ret)
-		return ret;
-	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK, &msm_mvs_pcm_ops);
-	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &msm_mvs_pcm_ops);
-
 	return 0;
 }
 
-struct snd_soc_platform_driver msm_mvs_soc_platform = {
-	.ops		= &msm_mvs_pcm_ops,
+struct snd_soc_platform msm_mvs_soc_platform = {
+	.name		= "msm-mvs-audio",
+	.remove		= msm_pcm_remove,
+	.pcm_ops	= &msm_mvs_pcm_ops,
 	.pcm_new	= msm_pcm_new,
 };
 EXPORT_SYMBOL(msm_mvs_soc_platform);
-
-static __devinit int msm_pcm_probe(struct platform_device *pdev)
-{
-	return snd_soc_register_platform(&pdev->dev,
-				&msm_mvs_soc_platform);
-}
-
-static int msm_pcm_remove(struct platform_device *pdev)
-{
-	snd_soc_unregister_platform(&pdev->dev);
-	return 0;
-}
-
-static struct platform_driver msm_pcm_driver = {
-	.driver = {
-		.name = "msm-mvs-audio",
-		.owner = THIS_MODULE,
-	},
-	.probe = msm_pcm_probe,
-	.remove = __devexit_p(msm_pcm_remove),
-};
 
 static int __init msm_mvs_soc_platform_init(void)
 {
@@ -922,13 +892,13 @@ static int __init msm_mvs_soc_platform_init(void)
 				"audio_mvs_suspend");
 	wake_lock_init(&audio_mvs_info.idle_lock, WAKE_LOCK_IDLE,
 				"audio_mvs_idle");
-	return platform_driver_register(&msm_pcm_driver);
+	return snd_soc_register_platform(&msm_mvs_soc_platform);
 }
 module_init(msm_mvs_soc_platform_init);
 
 static void __exit msm_mvs_soc_platform_exit(void)
 {
-	 platform_driver_unregister(&msm_pcm_driver);
+	snd_soc_unregister_platform(&msm_mvs_soc_platform);
 }
 module_exit(msm_mvs_soc_platform_exit);
 
