@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -8,11 +8,16 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  */
 
 #include <linux/kernel.h>
 
-#include <linux/msm_adc.h>
+#include <linux/m_adc.h>
 
 #define KELVINMIL_DEGMIL	273160
 
@@ -30,26 +35,6 @@ static const struct adc_map_pt adcmap_batttherm[] = {
 	{567,	 60},
 	{453,	 70},
 	{364,	 80}
-};
-
-static const struct adc_map_pt adcmap_msmtherm[] = {
-	{2150,	-30},
-	{2107,	-20},
-	{2037,	-10},
-	{1929,	  0},
-	{1776,	 10},
-	{1579,	 20},
-	{1467,	 25},
-	{1349,	 30},
-	{1108,	 40},
-	{878,	 50},
-	{677,	 60},
-	{513,	 70},
-	{385,	 80},
-	{287,	 90},
-	{215,	100},
-	{186,	110},
-	{107,	120}
 };
 
 static const struct adc_map_pt adcmap_ntcg104ef104fb[] = {
@@ -327,21 +312,6 @@ int32_t scale_batt_therm(int32_t adc_code,
 			&adc_chan_result->physical);
 }
 
-int32_t scale_msm_therm(int32_t adc_code,
-		const struct adc_properties *adc_properties,
-		const struct chan_properties *chan_properties,
-		struct adc_chan_result *adc_chan_result)
-{
-	scale_default(adc_code, adc_properties, chan_properties,
-			adc_chan_result);
-	/* convert mV ---> degC using the table */
-	return adc_map_linear(
-			adcmap_msmtherm,
-			sizeof(adcmap_msmtherm)/sizeof(adcmap_msmtherm[0]),
-			adc_chan_result->physical,
-			&adc_chan_result->physical);
-}
-
 int32_t scale_pmic_therm(int32_t adc_code,
 				const struct adc_properties *adc_properties,
 				const struct chan_properties *chan_properties,
@@ -454,7 +424,7 @@ int32_t scale_xtern_chgr_cur(int32_t adc_code,
 		if (rawfromoffset >= 1 << adc_properties->bitresolution)
 			rawfromoffset = (1 << adc_properties->bitresolution)
 									- 1;
-		adc_chan_result->measurement = ((int64_t)rawfromoffset * 5)*
+		adc_chan_result->measurement = ((int64_t)rawfromoffset << 1)*
 						chan_properties->adc_graph->dx*
 					chan_properties->gain_denominator;
 		do_div(adc_chan_result->measurement,
