@@ -412,4 +412,16 @@ config INPUT_CAPELLA_CM3602
 	  Say Y here to enable the Capella CM3602 Short Distance Proximity
 	  Sensor with Ambient Light Sensor.
 
+config INPUT_PMIC8058_VIBRA_MEMLESS
+	tristate "Qualcomm PM8058 vibrator support (ff-memless)"
+	depends on PMIC8058 && INPUT_FF_MEMLESS
+	default n
+	help
+	  This option enables device driver support for the vibrator
+	  on Qualcomm PM8058 chip. This driver supports ff-memless interface
+	  from input framework.
+
+	  To compile this driver as module, choose M here: the
+	  module will be called pmic8058-vib-memless.
+
 endif
