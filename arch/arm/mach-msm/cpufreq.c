@@ -3,7 +3,7 @@
  * MSM architecture cpufreq driver
  *
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2007 QUALCOMM Incorporated
+ * Copyright (c) 2007-2010, Code Aurora Forum. All rights reserved.
  * Author: Mike A. Chan <mikechan@google.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -17,63 +17,111 @@
  *
  */
 
-#include <linux/cpufreq.h>
 #include <linux/earlysuspend.h>
 #include <linux/init.h>
+#include <linux/cpufreq.h>
+#include <linux/workqueue.h>
+#include <linux/completion.h>
+#include <linux/cpu.h>
+
 #include "acpuclock.h"
 
-#ifdef CONFIG_MSM_CPU_FREQ_SCREEN
-static void msm_early_suspend(struct early_suspend *handler) {
-	acpuclk_set_rate(CONFIG_MSM_CPU_FREQ_SCREEN_OFF * 1000, 0);
-}
-
-static void msm_late_resume(struct early_suspend *handler) {
-	acpuclk_set_rate(CONFIG_MSM_CPU_FREQ_SCREEN_ON * 1000, 0);
-}
-
-static struct early_suspend msm_power_suspend = {
-	.suspend = msm_early_suspend,
-	.resume = msm_late_resume,
+#ifdef CONFIG_SMP
+struct cpufreq_work_struct {
+	struct work_struct work;
+	struct cpufreq_policy *policy;
+	struct completion complete;
+	int frequency;
+	int status;
 };
 
-static int __init clock_late_init(void)
+static DEFINE_PER_CPU(struct cpufreq_work_struct, cpufreq_work);
+#endif
+
+#define dprintk(msg...) \
+		cpufreq_debug_printk(CPUFREQ_DEBUG_DRIVER, "cpufreq-msm", msg)
+
+static int set_cpu_freq(struct cpufreq_policy *policy, unsigned int new_freq)
 {
-	register_early_suspend(&msm_power_suspend);
-	return 0;
+	int ret = 0;
+	struct cpufreq_freqs freqs;
+
+	if (policy->cpu != smp_processor_id()) {
+		pr_err("cpufreq: Attempting to cross set core %d frequency "
+			"from core %d\n", policy->cpu, smp_processor_id());
+		return -EFAULT;
+	}
+
+	freqs.old = policy->cur;
+	freqs.new = new_freq;
+	freqs.cpu = policy->cpu;
+	cpufreq_notify_transition(&freqs, CPUFREQ_PRECHANGE);
+	ret = acpuclk_set_rate(policy->cpu, new_freq, SETRATE_CPUFREQ);
+	if (!ret)
+		cpufreq_notify_transition(&freqs, CPUFREQ_POSTCHANGE);
+
+	return ret;
 }
 
-late_initcall(clock_late_init);
-#else
+#ifdef CONFIG_SMP
+static void set_cpu_work(struct work_struct *work)
+{
+	struct cpufreq_work_struct *cpu_work =
+		container_of(work, struct cpufreq_work_struct, work);
+
+	cpu_work->status = set_cpu_freq(cpu_work->policy, cpu_work->frequency);
+	complete(&cpu_work->complete);
+}
+#endif
 
 static int msm_cpufreq_target(struct cpufreq_policy *policy,
 				unsigned int target_freq,
 				unsigned int relation)
 {
+	int ret = -EFAULT;
 	int index;
-	struct cpufreq_freqs freqs;
-	struct cpufreq_frequency_table *table =
-		cpufreq_frequency_get_table(policy->cpu);
-
+	struct cpufreq_frequency_table *table;
+#ifdef CONFIG_SMP
+	struct cpufreq_work_struct *cpu_work = NULL;
+#endif
+	table = cpufreq_frequency_get_table(policy->cpu);
 	if (cpufreq_frequency_table_target(policy, table, target_freq, relation,
 			&index)) {
 		pr_err("cpufreq: invalid target_freq: %d\n", target_freq);
 		return -EINVAL;
 	}
 
-	if (policy->cur == table[index].frequency)
-		return 0;
-
 #ifdef CONFIG_CPU_FREQ_DEBUG
-	printk("msm_cpufreq_target %d r %d (%d-%d) selected %d\n", target_freq,
-		relation, policy->min, policy->max, table[index].frequency);
+	dprintk("CPU[%d] target %d relation %d (%d-%d) selected %d\n",
+		policy->cpu, target_freq, relation,
+		policy->min, policy->max, table[index].frequency);
 #endif
-	freqs.old = policy->cur;
-	freqs.new = table[index].frequency;
-	freqs.cpu = policy->cpu;
-	cpufreq_notify_transition(&freqs, CPUFREQ_PRECHANGE);
-	acpuclk_set_rate(table[index].frequency * 1000, 0);
-	cpufreq_notify_transition(&freqs, CPUFREQ_POSTCHANGE);
-	return 0;
+
+#ifdef CONFIG_SMP
+	cpu_work = &per_cpu(cpufreq_work, policy->cpu);
+	cpu_work->policy = policy;
+	cpu_work->frequency = table[index].frequency;
+	cpu_work->status = -ENODEV;
+
+	get_online_cpus();
+	if (cpu_online(policy->cpu)) {
+		if (policy->cpu == smp_processor_id()) {
+			cpu_work->status = set_cpu_freq(cpu_work->policy,
+						cpu_work->frequency);
+		} else {
+			cancel_work_sync(&cpu_work->work);
+			init_completion(&cpu_work->complete);
+			schedule_work_on(policy->cpu, &cpu_work->work);
+			wait_for_completion(&cpu_work->complete);
+		}
+	}
+	put_online_cpus();
+	ret = cpu_work->status;
+#else
+	ret = set_cpu_freq(policy, table[index].frequency);
+#endif
+
+	return ret;
 }
 
 static int msm_cpufreq_verify(struct cpufreq_policy *policy)
@@ -83,22 +131,34 @@ static int msm_cpufreq_verify(struct cpufreq_policy *policy)
 	return 0;
 }
 
-static int msm_cpufreq_init(struct cpufreq_policy *policy)
+static int __cpuinit msm_cpufreq_init(struct cpufreq_policy *policy)
 {
-	struct cpufreq_frequency_table *table =
-		cpufreq_frequency_get_table(policy->cpu);
+	struct cpufreq_frequency_table *table;
+#ifdef CONFIG_SMP
+	struct cpufreq_work_struct *cpu_work = NULL;
+#endif
 
-	BUG_ON(cpufreq_frequency_table_cpuinfo(policy, table));
-	policy->cur = acpuclk_get_rate();
+	table = cpufreq_frequency_get_table(policy->cpu);
+	policy->cur = acpuclk_get_rate(policy->cpu);
+	if (cpufreq_frequency_table_cpuinfo(policy, table)) {
+#ifdef CONFIG_MSM_CPU_FREQ_SET_MIN_MAX
+		policy->cpuinfo.min_freq = CONFIG_MSM_CPU_FREQ_MIN;
+		policy->cpuinfo.max_freq = CONFIG_MSM_CPU_FREQ_MAX;
+#endif
+	}
+#ifdef CONFIG_MSM_CPU_FREQ_SET_MIN_MAX
+	policy->min = CONFIG_MSM_CPU_FREQ_MIN;
+	policy->max = CONFIG_MSM_CPU_FREQ_MAX;
+#endif
+
 	policy->cpuinfo.transition_latency =
 		acpuclk_get_switch_time() * NSEC_PER_USEC;
+#ifdef CONFIG_SMP
+	cpu_work = &per_cpu(cpufreq_work, policy->cpu);
+	INIT_WORK(&cpu_work->work, set_cpu_work);
+#endif
 	return 0;
 }
-
-static struct freq_attr *msm_cpufreq_attr[] = {
-	&cpufreq_freq_attr_scaling_available_freqs,
-	NULL,
-};
 
 static struct cpufreq_driver msm_cpufreq_driver = {
 	/* lps calculations are handled here. */
@@ -107,7 +167,6 @@ static struct cpufreq_driver msm_cpufreq_driver = {
 	.verify		= msm_cpufreq_verify,
 	.target		= msm_cpufreq_target,
 	.name		= "msm",
-	.attr		= msm_cpufreq_attr,
 };
 
 static int __init msm_cpufreq_register(void)
@@ -115,5 +174,5 @@ static int __init msm_cpufreq_register(void)
 	return cpufreq_register_driver(&msm_cpufreq_driver);
 }
 
-device_initcall(msm_cpufreq_register);
-#endif
+late_initcall(msm_cpufreq_register);
+
