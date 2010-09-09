@@ -9,6 +9,11 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
  */
 
 #include <linux/module.h>
@@ -69,6 +74,8 @@ static void mdp_dma_s_update_lcd(struct msm_fb_data_type *mfd)
 		dma_s_cfg_reg |= DMA_AHBM_LCD_SEL_SECONDARY;
 		outp32(MDP_EBI2_LCD1, mfd->data_port_phys);
 	}
+
+	dma_s_cfg_reg |= DMA_DITHER_EN;
 
 	src = (uint8 *) iBuf->buf;
 	/* starting input address */

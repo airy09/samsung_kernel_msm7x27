@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -8,109 +8,37 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  */
 
 #include <linux/kernel.h>
 #include <linux/slab.h>
-#include <linux/init.h>
 #include <linux/err.h>
 #include <linux/module.h>
-#include <linux/spinlock.h>
-#include <linux/debugfs.h>
-#include <linux/list.h>
-#include <linux/seq_file.h>
+#include <linux/mutex.h>
 
 #include <mach/msm_xo.h>
-#include <mach/rpm.h>
-#include <mach/socinfo.h>
 
-#include "rpm_resources.h"
+#include "rpm.h"
 
-static DEFINE_SPINLOCK(msm_xo_lock);
+static DEFINE_MUTEX(msm_xo_mutex);
 
 struct msm_xo {
-	unsigned votes[NUM_MSM_XO_MODES];
+	unsigned votes[NUM_XO_MODES];
 	unsigned mode;
-	struct list_head voters;
 };
 
 struct msm_xo_voter {
 	const char *name;
 	unsigned mode;
 	struct msm_xo *xo;
-	struct list_head list;
 };
 
-static struct msm_xo msm_xo_sources[NUM_MSM_XO_IDS];
-
-#ifdef CONFIG_DEBUG_FS
-static const char *msm_xo_mode_to_str(unsigned mode)
-{
-	switch (mode) {
-	case MSM_XO_MODE_ON:
-		return "ON";
-	case MSM_XO_MODE_PIN_CTRL:
-		return "PIN";
-	case MSM_XO_MODE_OFF:
-		return "OFF";
-	default:
-		return "ERR";
-	}
-}
-
-static void msm_xo_dump_xo(struct seq_file *m, struct msm_xo *xo,
-		const char *name)
-{
-	struct msm_xo_voter *voter;
-
-	seq_printf(m, "%-20s%s\n", name, msm_xo_mode_to_str(xo->mode));
-	list_for_each_entry(voter, &xo->voters, list)
-		seq_printf(m, " %s %-16s %s\n",
-				xo->mode == voter->mode ? "*" : " ",
-				voter->name,
-				msm_xo_mode_to_str(voter->mode));
-}
-
-static int msm_xo_show_voters(struct seq_file *m, void *v)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&msm_xo_lock, flags);
-	msm_xo_dump_xo(m, &msm_xo_sources[MSM_XO_TCXO_D0], "TCXO D0");
-	msm_xo_dump_xo(m, &msm_xo_sources[MSM_XO_TCXO_D1], "TCXO D1");
-	msm_xo_dump_xo(m, &msm_xo_sources[MSM_XO_TCXO_A0], "TCXO A0");
-	msm_xo_dump_xo(m, &msm_xo_sources[MSM_XO_TCXO_A1], "TCXO A1");
-	msm_xo_dump_xo(m, &msm_xo_sources[MSM_XO_TCXO_A2], "TCXO A2");
-	msm_xo_dump_xo(m, &msm_xo_sources[MSM_XO_CORE], "TCXO Core");
-	msm_xo_dump_xo(m, &msm_xo_sources[MSM_XO_PXO], "PXO during sleep");
-	msm_xo_dump_xo(m, &msm_xo_sources[MSM_XO_CXO], "CXO");
-	spin_unlock_irqrestore(&msm_xo_lock, flags);
-
-	return 0;
-}
-
-static int msm_xo_voters_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, msm_xo_show_voters, inode->i_private);
-}
-
-static const struct file_operations msm_xo_voters_ops = {
-	.open		= msm_xo_voters_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= seq_release,
-};
-
-static int __init msm_xo_debugfs_init(void)
-{
-	struct dentry *entry;
-
-	entry = debugfs_create_file("xo_voters", S_IRUGO, NULL, NULL,
-			&msm_xo_voters_ops);
-	return IS_ERR(entry) ? PTR_ERR(entry) : 0;
-}
-late_initcall(msm_xo_debugfs_init);
-#endif
+static struct msm_xo msm_xo_sources[NUM_XO_IDS];
 
 static int msm_xo_update_vote(struct msm_xo *xo)
 {
@@ -118,12 +46,12 @@ static int msm_xo_update_vote(struct msm_xo *xo)
 	unsigned vote, prev_vote = xo->mode;
 	struct msm_rpm_iv_pair cmd;
 
-	if (xo->votes[MSM_XO_MODE_ON])
-		vote = MSM_XO_MODE_ON;
-	else if (xo->votes[MSM_XO_MODE_PIN_CTRL])
-		vote = MSM_XO_MODE_PIN_CTRL;
+	if (xo->votes[XO_MODE_ON])
+		vote = XO_MODE_ON;
+	else if (xo->votes[XO_MODE_PIN_CTRL])
+		vote = XO_MODE_PIN_CTRL;
 	else
-		vote = MSM_XO_MODE_OFF;
+		vote = XO_MODE_OFF;
 
 	if (vote == prev_vote)
 		return 0;
@@ -134,30 +62,21 @@ static int msm_xo_update_vote(struct msm_xo *xo)
 	 */
 	xo->mode = vote;
 
-	if (xo == &msm_xo_sources[MSM_XO_PXO]) {
+	if (xo == &msm_xo_sources[PXO]) {
 		cmd.id = MSM_RPM_ID_PXO_CLK;
-		cmd.value = msm_xo_sources[MSM_XO_PXO].mode ? 1 : 0;
-		ret = msm_rpmrs_set_noirq(MSM_RPM_CTX_SET_SLEEP, &cmd, 1);
-	} else if (xo == &msm_xo_sources[MSM_XO_CXO]) {
-		cmd.id = MSM_RPM_ID_CXO_CLK;
-		cmd.value = msm_xo_sources[MSM_XO_CXO].mode ? 1 : 0;
-		ret = msm_rpmrs_set_noirq(MSM_RPM_CTX_SET_0, &cmd, 1);
+		cmd.value = msm_xo_sources[PXO].mode ? 1 : 0;
+		ret = 0;
+		/* TODO: Implement PXO voting */
 	} else {
 		cmd.id = MSM_RPM_ID_CXO_BUFFERS;
-		cmd.value = (msm_xo_sources[MSM_XO_TCXO_D0].mode << 0)  |
-			    (msm_xo_sources[MSM_XO_TCXO_D1].mode << 8)  |
-			    (msm_xo_sources[MSM_XO_TCXO_A0].mode << 16) |
-			    (msm_xo_sources[MSM_XO_TCXO_A1].mode << 24) |
-			    (msm_xo_sources[MSM_XO_TCXO_A2].mode << 28) |
-			    /*
-			     * 8660 RPM has XO_CORE at bit 18 and 8960 RPM has
-			     * XO_CORE at bit 20. Since the opposite bit is
-			     * reserved in both cases, just set both and be
-			     * done with it.
-			     */
-			    ((msm_xo_sources[MSM_XO_CORE].mode ? 1 : 0) << 20) |
-			    ((msm_xo_sources[MSM_XO_CORE].mode ? 1 : 0) << 18);
-		ret = msm_rpm_set_noirq(MSM_RPM_CTX_SET_0, &cmd, 1);
+		cmd.value = (msm_xo_sources[TCXO_D0].mode << 0) |
+			    (msm_xo_sources[TCXO_D1].mode << 8) |
+			    (msm_xo_sources[TCXO_A0].mode << 16) |
+			    (msm_xo_sources[TCXO_A1].mode << 24);
+		/* FIXME: not yet supported.
+		 * ret = msm_rpm_set(MSM_RPM_CTX_SET_0, &cmd, 1);
+		 */
+		ret = 0;
 	}
 
 	if (ret)
@@ -201,17 +120,13 @@ out:
 int msm_xo_mode_vote(struct msm_xo_voter *xo_voter, enum msm_xo_modes mode)
 {
 	int ret;
-	unsigned long flags;
 
-	if (!xo_voter)
-		return 0;
-
-	if (mode >= NUM_MSM_XO_MODES || IS_ERR(xo_voter))
+	if (mode >= NUM_XO_MODES)
 		return -EINVAL;
 
-	spin_lock_irqsave(&msm_xo_lock, flags);
+	mutex_lock(&msm_xo_mutex);
 	ret = __msm_xo_mode_vote(xo_voter, mode);
-	spin_unlock_irqrestore(&msm_xo_lock, flags);
+	mutex_unlock(&msm_xo_mutex);
 
 	return ret;
 }
@@ -230,17 +145,9 @@ EXPORT_SYMBOL(msm_xo_mode_vote);
 struct msm_xo_voter *msm_xo_get(enum msm_xo_ids xo_id, const char *voter)
 {
 	int ret;
-	unsigned long flags;
 	struct msm_xo_voter *xo_voter;
 
-	/*
-	 * TODO: Remove early return for 8064 once RPM XO voting support
-	 * is available.
-	 */
-	if (cpu_is_apq8064())
-		return NULL;
-
-	if (xo_id >= NUM_MSM_XO_IDS) {
+	if (xo_id >= NUM_XO_IDS) {
 		ret = -EINVAL;
 		goto err;
 	}
@@ -260,10 +167,9 @@ struct msm_xo_voter *msm_xo_get(enum msm_xo_ids xo_id, const char *voter)
 	xo_voter->xo = &msm_xo_sources[xo_id];
 
 	/* Voters vote for OFF by default */
-	spin_lock_irqsave(&msm_xo_lock, flags);
-	xo_voter->xo->votes[MSM_XO_MODE_OFF]++;
-	list_add(&xo_voter->list, &xo_voter->xo->voters);
-	spin_unlock_irqrestore(&msm_xo_lock, flags);
+	mutex_lock(&msm_xo_mutex);
+	xo_voter->xo->votes[XO_MODE_OFF]++;
+	mutex_unlock(&msm_xo_mutex);
 
 	return xo_voter;
 
@@ -279,49 +185,17 @@ EXPORT_SYMBOL(msm_xo_get);
  * @xo_voter - Valid handle returned from msm_xo_get()
  *
  * Release a reference to an XO voting handle. This also removes the voter's
- * vote, therefore calling msm_xo_mode_vote(xo_voter, MSM_XO_MODE_OFF)
- * beforehand is unnecessary.
+ * vote, therefore calling msm_xo_mode_vote(xo_voter, XO_MODE_OFF) beforehand
+ * is unnecessary.
  */
 void msm_xo_put(struct msm_xo_voter *xo_voter)
 {
-	unsigned long flags;
-
-	if (!xo_voter || IS_ERR(xo_voter))
-		return;
-
-	spin_lock_irqsave(&msm_xo_lock, flags);
-	__msm_xo_mode_vote(xo_voter, MSM_XO_MODE_OFF);
-	xo_voter->xo->votes[MSM_XO_MODE_OFF]--;
-	list_del(&xo_voter->list);
-	spin_unlock_irqrestore(&msm_xo_lock, flags);
+	mutex_lock(&msm_xo_mutex);
+	__msm_xo_mode_vote(xo_voter, XO_MODE_OFF);
+	xo_voter->xo->votes[XO_MODE_OFF]--;
+	mutex_unlock(&msm_xo_mutex);
 
 	kfree(xo_voter->name);
 	kfree(xo_voter);
 }
 EXPORT_SYMBOL(msm_xo_put);
-
-int __init msm_xo_init(void)
-{
-	int i;
-	int ret;
-	struct msm_rpm_iv_pair cmd[2];
-
-	for (i = 0; i < ARRAY_SIZE(msm_xo_sources); i++)
-		INIT_LIST_HEAD(&msm_xo_sources[i].voters);
-
-	cmd[0].id = MSM_RPM_ID_PXO_CLK;
-	cmd[0].value = 1;
-	cmd[1].id = MSM_RPM_ID_CXO_BUFFERS;
-	cmd[1].value = 0;
-	ret = msm_rpmrs_set(MSM_RPM_CTX_SET_0, cmd, 2);
-	if (ret)
-		goto out;
-
-	cmd[0].id = MSM_RPM_ID_PXO_CLK;
-	cmd[0].value = 0;
-	ret = msm_rpmrs_set(MSM_RPM_CTX_SET_SLEEP, cmd, 1);
-	if (ret)
-		goto out;
-out:
-	return ret;
-}

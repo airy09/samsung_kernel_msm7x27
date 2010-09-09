@@ -2,7 +2,7 @@
  *
  * Copyright (C) 2008 Google, Inc.
  * Copyright (C) 2008 HTC Corporation
- * Copyright (c) 2009-2011, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2009-2010, Code Aurora Forum. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -27,7 +27,7 @@
 #include <linux/delay.h>
 #include <linux/earlysuspend.h>
 #include <linux/list.h>
-#include <linux/ion.h>
+#include <linux/android_pmem.h>
 #include <asm/atomic.h>
 #include <asm/ioctls.h>
 #include <mach/msm_adsp.h>
@@ -132,9 +132,9 @@ struct audlpa_event {
 	union msm_audio_event_payload payload;
 };
 
-struct audlpa_ion_region {
+struct audlpa_pmem_region {
 	struct list_head list;
-	struct ion_handle *handle;
+	struct file *file;
 	int fd;
 	void *vaddr;
 	unsigned long paddr;
@@ -166,7 +166,7 @@ static int auddec_dsp_config(struct audio *audio, int enable);
 static void audio_dsp_event(void *private, unsigned id, uint16_t *msg);
 static void audlpa_post_event(struct audio *audio, int type,
 	union msm_audio_event_payload payload);
-static unsigned long audlpa_ion_fixup(struct audio *audio, void *addr,
+static unsigned long audlpa_pmem_fixup(struct audio *audio, void *addr,
 				unsigned long len, int ref_up);
 static void audlpa_async_send_data(struct audio *audio, unsigned needed,
 				uint32_t *payload);
@@ -177,42 +177,18 @@ static void lpa_listner(u32 evt_id, union auddev_evt_data *evt_payload,
 	struct audio *audio = (struct audio *) private_data;
 	switch (evt_id) {
 	case AUDDEV_EVT_DEV_RDY:
-		MM_DBG(":AUDDEV_EVT_DEV_RDY routing id = %d\n",
-		evt_payload->routing_id);
-		/* Do not select HLB path for icodec, if there is already COPP3
-		 * routing exists. DSP can not support concurrency of HLB path
-		 * and COPP3 routing as it involves different buffer Path */
-		if (((0x1 << evt_payload->routing_id) == AUDPP_MIXER_ICODEC) &&
-			!(audio->source & AUDPP_MIXER_3)) {
+		MM_DBG(":AUDDEV_EVT_DEV_RDY\n");
+		if ((0x1 << evt_payload->routing_id) == AUDPP_MIXER_ICODEC) {
 			audio->source |= AUDPP_MIXER_HLB;
 			MM_DBG("mixer_mask modified for low-power audio\n");
 		} else
 			audio->source |= (0x1 << evt_payload->routing_id);
 
-		MM_DBG("running = %d, enabled = %d, source = 0x%x\n",
-			audio->running, audio->enabled, audio->source);
 		if (audio->running == 1 && audio->enabled == 1) {
 			audpp_route_stream(audio->dec_id, audio->source);
-			if (audio->source & AUDPP_MIXER_HLB) {
-				audpp_dsp_set_vol_pan(
-					AUDPP_CMD_CFG_DEV_MIXER_ID_4,
-					&audio->vol_pan,
-					COPP);
-					/*restore the POPP gain to 0x2000
-					this is needed to avoid use cases
-					where POPP volume is lowered during
-					NON HLB playback, when device moved
-					from NON HLB to HLB POPP is not
-					disabled but POPP gain will be retained
-					as the old one which result
-					in lower volume*/
-					audio->vol_pan.volume = 0x2000;
-					audpp_dsp_set_vol_pan(
-						audio->dec_id,
-						&audio->vol_pan, POPP);
-			} else if (audio->source & AUDPP_MIXER_NONHLB)
-				audpp_dsp_set_vol_pan(
-					audio->dec_id, &audio->vol_pan, POPP);
+			audpp_dsp_set_vol_pan(AUDPP_CMD_CFG_DEV_MIXER_ID_4,
+				&audio->vol_pan,
+				COPP);
 			if (audio->device_switch == DEVICE_SWITCH_STATE_READY) {
 				audio->wflush = 1;
 				audio->device_switch =
@@ -236,10 +212,7 @@ static void lpa_listner(u32 evt_id, union auddev_evt_data *evt_payload,
 		break;
 	case AUDDEV_EVT_REL_PENDING:
 		MM_DBG(":AUDDEV_EVT_REL_PENDING\n");
-		/* If route to multiple devices like COPP3, not need to
-		 * handle device switch */
-		if ((audio->running == 1) && (audio->enabled == 1) &&
-			!(audio->source & AUDPP_MIXER_3)) {
+		if (audio->running == 1 && audio->enabled == 1) {
 			if (audio->device_switch == DEVICE_SWITCH_STATE_NONE) {
 				if (!(audio->drv_status & ADRV_STATUS_PAUSE)) {
 					if (audpp_pause(audio->dec_id, 1))
@@ -265,36 +238,23 @@ static void lpa_listner(u32 evt_id, union auddev_evt_data *evt_payload,
 		}
 		break;
 	case AUDDEV_EVT_DEV_RLS:
-		/* If there is already COPP3 routing exists. icodec route
-		 * was not having HLB path. */
-		MM_DBG(":AUDDEV_EVT_DEV_RLS routing id = %d\n",
-			evt_payload->routing_id);
-		if (((0x1 << evt_payload->routing_id) == AUDPP_MIXER_ICODEC) &&
-			!(audio->source & AUDPP_MIXER_3))
+		MM_DBG(":AUDDEV_EVT_DEV_RLS\n");
+		if ((0x1 << evt_payload->routing_id) == AUDPP_MIXER_ICODEC)
 			audio->source &= ~AUDPP_MIXER_HLB;
 		else
 			audio->source &= ~(0x1 << evt_payload->routing_id);
-		MM_DBG("running = %d, enabled = %d, source = 0x%x\n",
-			audio->running, audio->enabled, audio->source);
 
 		if (audio->running == 1 && audio->enabled == 1)
 			audpp_route_stream(audio->dec_id, audio->source);
 		break;
 	case AUDDEV_EVT_STREAM_VOL_CHG:
 		audio->vol_pan.volume = evt_payload->session_vol;
-		MM_DBG("\n:AUDDEV_EVT_STREAM_VOL_CHG, stream vol %d\n"
-			"running = %d, enabled = %d, source = 0x%x",
-			audio->vol_pan.volume, audio->running,
-			audio->enabled, audio->source);
-		if (audio->running == 1 && audio->enabled == 1) {
-			if (audio->source & AUDPP_MIXER_HLB)
-				audpp_dsp_set_vol_pan(
-					AUDPP_CMD_CFG_DEV_MIXER_ID_4,
-					&audio->vol_pan, COPP);
-			else if (audio->source & AUDPP_MIXER_NONHLB)
-				audpp_dsp_set_vol_pan(
-					audio->dec_id, &audio->vol_pan, POPP);
-		}
+		MM_DBG("\n:AUDDEV_EVT_STREAM_VOL_CHG, stream vol %d\n",
+						audio->vol_pan.volume);
+		if (audio->running)
+			audpp_dsp_set_vol_pan(AUDPP_CMD_CFG_DEV_MIXER_ID_4,
+						&audio->vol_pan,
+						COPP);
 		break;
 	default:
 		MM_ERR(":ERROR:wrong event\n");
@@ -331,27 +291,16 @@ static int audio_enable(struct audio *audio)
 /* must be called with audio->lock held */
 static int audio_disable(struct audio *audio)
 {
-	int rc = 0;
 	MM_DBG("\n"); /* Macro prints the file name and function */
 	if (audio->enabled) {
 		audio->enabled = 0;
-		audio->dec_state = MSM_AUD_DECODER_STATE_NONE;
 		auddec_dsp_config(audio, 0);
-		rc = wait_event_interruptible_timeout(audio->wait,
-				audio->dec_state != MSM_AUD_DECODER_STATE_NONE,
-				msecs_to_jiffies(MSM_AUD_DECODER_WAIT_MS));
-		if (rc == 0)
-			rc = -ETIMEDOUT;
-		else if (audio->dec_state != MSM_AUD_DECODER_STATE_CLOSE)
-			rc = -EFAULT;
-		else
-			rc = 0;
 		wake_up(&audio->write_wait);
 		msm_adsp_disable(audio->audplay);
 		audpp_disable(audio->dec_id, audio);
 		audio->out_needed = 0;
 	}
-	return rc;
+	return 0;
 }
 
 /* ------------------- dsp --------------------- */
@@ -396,11 +345,6 @@ static void audio_dsp_event(void *private, unsigned id, uint16_t *msg)
 					audio->dec_state =
 						MSM_AUD_DECODER_STATE_FAILURE;
 					wake_up(&audio->wait);
-				} else if (reason == AUDPP_MSG_REASON_NONE) {
-					/* decoder is in disable state */
-					audio->dec_state =
-						MSM_AUD_DECODER_STATE_CLOSE;
-					wake_up(&audio->wait);
 				}
 				break;
 			}
@@ -437,16 +381,9 @@ static void audio_dsp_event(void *private, unsigned id, uint16_t *msg)
 			auddec_dsp_config(audio, 1);
 			audio->out_needed = 0;
 			audio->running = 1;
-			MM_DBG("source = 0x%x\n", audio->source);
-			if (audio->source & AUDPP_MIXER_HLB)
-				audpp_dsp_set_vol_pan(
-					AUDPP_CMD_CFG_DEV_MIXER_ID_4,
-					&audio->vol_pan,
-					COPP);
-			else if (audio->source & AUDPP_MIXER_NONHLB)
-				audpp_dsp_set_vol_pan(
-					audio->dec_id, &audio->vol_pan,
-					POPP);
+			audpp_dsp_set_vol_pan(AUDPP_CMD_CFG_DEV_MIXER_ID_4,
+						&audio->vol_pan,
+						COPP);
 			audpp_dsp_set_eq(audio->dec_id, audio->eq_enable,
 					&audio->eq, POPP);
 		} else if (msg[0] == AUDPP_MSG_ENA_DIS) {
@@ -603,14 +540,16 @@ static void audlpa_async_send_data(struct audio *audio, unsigned needed,
 			temp = audio->bytecount_head;
 			used_buf = list_first_entry(&audio->out_queue,
 					struct audlpa_buffer_node, list);
-
-			audio->bytecount_head += used_buf->buf.data_len;
-			temp = audio->bytecount_head;
-			list_del(&used_buf->list);
-			evt_payload.aio_buf = used_buf->buf;
-			audlpa_post_event(audio, AUDIO_EVENT_WRITE_DONE,
-					  evt_payload);
-			kfree(used_buf);
+			if ((audio->bytecount_head + used_buf->buf.data_len) <
+				audio->bytecount_consumed) {
+				audio->bytecount_head += used_buf->buf.data_len;
+				temp = audio->bytecount_head;
+				list_del(&used_buf->list);
+				evt_payload.aio_buf = used_buf->buf;
+				audlpa_post_event(audio, AUDIO_EVENT_WRITE_DONE,
+						  evt_payload);
+				kfree(used_buf);
+			}
 			audio->drv_status &= ~ADRV_STATUS_OBUF_GIVEN;
 		}
 	}
@@ -753,7 +692,7 @@ static long audlpa_process_event_req(struct audio *audio, void __user *arg)
 	if (drv_evt->event_type == AUDIO_EVENT_WRITE_DONE ||
 	    drv_evt->event_type == AUDIO_EVENT_READ_DONE) {
 		mutex_lock(&audio->lock);
-		audlpa_ion_fixup(audio, drv_evt->payload.aio_buf.buf_addr,
+		audlpa_pmem_fixup(audio, drv_evt->payload.aio_buf.buf_addr,
 				  drv_evt->payload.aio_buf.buf_len, 0);
 		mutex_unlock(&audio->lock);
 	}
@@ -763,118 +702,94 @@ static long audlpa_process_event_req(struct audio *audio, void __user *arg)
 	return rc;
 }
 
-static int audlpa_ion_check(struct audio *audio,
+static int audlpa_pmem_check(struct audio *audio,
 		void *vaddr, unsigned long len)
 {
-	struct audlpa_ion_region *region_elt;
-	struct audlpa_ion_region t = {.vaddr = vaddr, .len = len };
+	struct audlpa_pmem_region *region_elt;
+	struct audlpa_pmem_region t = { .vaddr = vaddr, .len = len };
 
-	list_for_each_entry(region_elt, &audio->ion_region_queue, list) {
+	list_for_each_entry(region_elt, &audio->pmem_region_queue, list) {
 		if (CONTAINS(region_elt, &t) || CONTAINS(&t, region_elt) ||
 		    OVERLAPS(region_elt, &t)) {
-			MM_ERR("[%p]:region (vaddr %p len %ld)"
+			MM_ERR("region (vaddr %p len %ld)"
 				" clashes with registered region"
 				" (vaddr %p paddr %p len %ld)\n",
-				audio, vaddr, len,
+				vaddr, len,
 				region_elt->vaddr,
-				(void *)region_elt->paddr, region_elt->len);
+				(void *)region_elt->paddr,
+				region_elt->len);
 			return -EINVAL;
 		}
 	}
 
 	return 0;
 }
-static int audlpa_ion_add(struct audio *audio,
-			struct msm_audio_ion_info *info)
-{
-	ion_phys_addr_t paddr;
-	size_t len;
-	unsigned long kvaddr;
-	struct audlpa_ion_region *region;
-	int rc = -EINVAL;
-	struct ion_handle *handle;
-	unsigned long ionflag;
 
-	MM_ERR("\n"); /* Macro prints the file name and function */
+static int audlpa_pmem_add(struct audio *audio,
+	struct msm_audio_pmem_info *info)
+{
+	unsigned long paddr, kvaddr, len;
+	struct file *file;
+	struct audlpa_pmem_region *region;
+	int rc = -EINVAL;
+
+	MM_DBG("\n"); /* Macro prints the file name and function */
 	region = kmalloc(sizeof(*region), GFP_KERNEL);
 
 	if (!region) {
 		rc = -ENOMEM;
 		goto end;
 	}
-	handle = ion_import_fd(audio->client, info->fd);
-	if (IS_ERR_OR_NULL(handle)) {
-		pr_err("%s: could not get handle of the given fd\n", __func__);
-		goto import_error;
+
+	if (get_pmem_file(info->fd, &paddr, &kvaddr, &len, &file)) {
+		kfree(region);
+		goto end;
 	}
-	rc = ion_handle_get_flags(audio->client, handle, &ionflag);
-	if (rc) {
-		pr_err("%s: could not get flags for the handle\n", __func__);
-		goto flag_error;
-	}
-	kvaddr = (unsigned long)ion_map_kernel(audio->client, handle, ionflag);
-	if (IS_ERR_OR_NULL((void *)kvaddr)) {
-		pr_err("%s: could not get virtual address\n", __func__);
-		goto map_error;
-	}
-	rc = ion_phys(audio->client, handle, &paddr, &len);
-	if (rc) {
-		pr_err("%s: could not get physical address\n", __func__);
-		goto ion_error;
-	}
-	rc = audlpa_ion_check(audio, info->vaddr, len);
+
+	rc = audlpa_pmem_check(audio, info->vaddr, len);
 	if (rc < 0) {
-		MM_ERR("audpcm_ion_check failed\n");
-		goto ion_error;
+		put_pmem_file(file);
+		kfree(region);
+		goto end;
 	}
-	region->handle = handle;
+
 	region->vaddr = info->vaddr;
 	region->fd = info->fd;
 	region->paddr = paddr;
 	region->kvaddr = kvaddr;
 	region->len = len;
+	region->file = file;
 	region->ref_cnt = 0;
-	MM_DBG("[%p]:add region paddr %lx vaddr %p, len %lu kvaddr %lx\n",
-		audio, region->paddr, region->vaddr,
-		region->len, region->kvaddr);
-	list_add_tail(&region->list, &audio->ion_region_queue);
-
-	return rc;
-
-ion_error:
-	ion_unmap_kernel(audio->client, handle);
-map_error:
-flag_error:
-	ion_free(audio->client, handle);
-import_error:
-	kfree(region);
+	MM_DBG("add region paddr %lx vaddr %p, len %lu\n", region->paddr,
+			region->vaddr, region->len);
+	list_add_tail(&region->list, &audio->pmem_region_queue);
 end:
 	return rc;
 }
 
-static int audlpa_ion_remove(struct audio *audio,
-			struct msm_audio_ion_info *info)
+static int audlpa_pmem_remove(struct audio *audio,
+	struct msm_audio_pmem_info *info)
 {
-	struct audlpa_ion_region *region;
+	struct audlpa_pmem_region *region;
 	struct list_head *ptr, *next;
 	int rc = -EINVAL;
 
-	list_for_each_safe(ptr, next, &audio->ion_region_queue) {
-		region = list_entry(ptr, struct audlpa_ion_region, list);
+	MM_DBG("info fd %d vaddr %p\n", info->fd, info->vaddr);
 
-		if (region != NULL && (region->fd == info->fd) &&
+	list_for_each_safe(ptr, next, &audio->pmem_region_queue) {
+		region = list_entry(ptr, struct audlpa_pmem_region, list);
+
+		if ((region->fd == info->fd) &&
 		    (region->vaddr == info->vaddr)) {
 			if (region->ref_cnt) {
-				MM_DBG("%s[%p]:region %p in use ref_cnt %d\n",
-					__func__, audio, region,
-					region->ref_cnt);
+				MM_DBG("region %p in use ref_cnt %d\n",
+						region, region->ref_cnt);
 				break;
 			}
 			MM_DBG("remove region fd %d vaddr %p\n",
 				info->fd, info->vaddr);
 			list_del(&region->list);
-			ion_unmap_kernel(audio->client, region->handle);
-			ion_free(audio->client, region->handle);
+			put_pmem_file(region->file);
 			kfree(region);
 			rc = 0;
 			break;
@@ -884,20 +799,23 @@ static int audlpa_ion_remove(struct audio *audio,
 	return rc;
 }
 
-static int audlpa_ion_lookup_vaddr(struct audio *audio, void *addr,
-			unsigned long len, struct audlpa_ion_region **region)
+static int audlpa_pmem_lookup_vaddr(struct audio *audio, void *addr,
+		     unsigned long len, struct audlpa_pmem_region **region)
 {
-	struct audlpa_ion_region *region_elt;
+	struct audlpa_pmem_region *region_elt;
+
 	int match_count = 0;
+
 	*region = NULL;
 
 	/* returns physical address or zero */
-	list_for_each_entry(region_elt, &audio->ion_region_queue, list) {
+	list_for_each_entry(region_elt, &audio->pmem_region_queue,
+		list) {
 		if (addr >= region_elt->vaddr &&
 		    addr < region_elt->vaddr + region_elt->len &&
 		    addr + len <= region_elt->vaddr + region_elt->len) {
 			/* offset since we could pass vaddr inside a registerd
-			 * ion buffer
+			 * pmem buffer
 			 */
 
 			match_count++;
@@ -907,16 +825,13 @@ static int audlpa_ion_lookup_vaddr(struct audio *audio, void *addr,
 	}
 
 	if (match_count > 1) {
-		MM_ERR("%s[%p]:multiple hits for vaddr %p, len %ld\n",
-			 __func__, audio, addr, len);
-		list_for_each_entry(region_elt, &audio->ion_region_queue,
-					list) {
+		MM_ERR("multiple hits for vaddr %p, len %ld\n", addr, len);
+		list_for_each_entry(region_elt,
+		  &audio->pmem_region_queue, list) {
 			if (addr >= region_elt->vaddr &&
 			    addr < region_elt->vaddr + region_elt->len &&
 			    addr + len <= region_elt->vaddr + region_elt->len)
-					MM_ERR("\t%s[%p]:%p, %ld --> %p\n",
-						__func__, audio,
-						region_elt->vaddr,
+				MM_ERR("\t%p, %ld --> %p\n", region_elt->vaddr,
 						region_elt->len,
 						(void *)region_elt->paddr);
 		}
@@ -924,17 +839,17 @@ static int audlpa_ion_lookup_vaddr(struct audio *audio, void *addr,
 
 	return *region ? 0 : -1;
 }
-static unsigned long audlpa_ion_fixup(struct audio *audio, void *addr,
+
+unsigned long audlpa_pmem_fixup(struct audio *audio, void *addr,
 		    unsigned long len, int ref_up)
 {
-	struct audlpa_ion_region *region;
+	struct audlpa_pmem_region *region;
 	unsigned long paddr;
 	int ret;
 
-	ret = audlpa_ion_lookup_vaddr(audio, addr, len, &region);
+	ret = audlpa_pmem_lookup_vaddr(audio, addr, len, &region);
 	if (ret) {
-		MM_ERR("%s[%p]:lookup (%p, %ld) failed\n",
-			__func__, audio, addr, len);
+		MM_ERR("lookup (%p, %ld) failed\n", addr, len);
 		return 0;
 	}
 	if (ref_up)
@@ -968,7 +883,7 @@ static int audlpa_aio_buf_add(struct audio *audio, unsigned dir,
 			buf_node->buf.buf_addr, buf_node->buf.buf_len,
 			buf_node->buf.data_len);
 
-	buf_node->paddr = audlpa_ion_fixup(
+	buf_node->paddr = audlpa_pmem_fixup(
 		audio, buf_node->buf.buf_addr,
 		buf_node->buf.buf_len, 1);
 
@@ -1256,26 +1171,25 @@ static long audio_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			audio->drv_status &= ~ADRV_STATUS_PAUSE;
 		break;
 
-	case AUDIO_REGISTER_ION: {
-		struct msm_audio_ion_info info;
-		MM_DBG("AUDIO_REGISTER_ION\n");
-		if (copy_from_user(&info, (void *) arg, sizeof(info)))
+	case AUDIO_REGISTER_PMEM: {
+			struct msm_audio_pmem_info info;
+			MM_DBG("AUDIO_REGISTER_PMEM\n");
+			if (copy_from_user(&info, (void *) arg, sizeof(info)))
 				rc = -EFAULT;
 			else
-				rc = audlpa_ion_add(audio, &info);
+				rc = audlpa_pmem_add(audio, &info);
 			break;
 		}
 
-	case AUDIO_DEREGISTER_ION: {
-		struct msm_audio_ion_info info;
-		MM_DBG("AUDIO_DEREGISTER_ION\n");
-		if (copy_from_user(&info, (void *) arg, sizeof(info)))
+	case AUDIO_DEREGISTER_PMEM: {
+			struct msm_audio_pmem_info info;
+			MM_DBG("AUDIO_DEREGISTER_PMEM\n");
+			if (copy_from_user(&info, (void *) arg, sizeof(info)))
 				rc = -EFAULT;
 			else
-				rc = audlpa_ion_remove(audio, &info);
+				rc = audlpa_pmem_remove(audio, &info);
 			break;
 		}
-
 	case AUDIO_ASYNC_WRITE:
 		if (audio->drv_status & ADRV_STATUS_FSYNC)
 			rc = -EBUSY;
@@ -1361,16 +1275,15 @@ int audlpa_fsync(struct file *file, int datasync)
 	return audlpa_async_fsync(audio);
 }
 
-static void audpcm_reset_ion_region(struct audio *audio)
+static void audlpa_reset_pmem_region(struct audio *audio)
 {
-	struct audlpa_ion_region *region;
+	struct audlpa_pmem_region *region;
 	struct list_head *ptr, *next;
 
-	list_for_each_safe(ptr, next, &audio->ion_region_queue) {
-		region = list_entry(ptr, struct audlpa_ion_region, list);
+	list_for_each_safe(ptr, next, &audio->pmem_region_queue) {
+		region = list_entry(ptr, struct audlpa_pmem_region, list);
 		list_del(&region->list);
-		ion_unmap_kernel(audio->client, region->handle);
-		ion_free(audio->client, region->handle);
+		put_pmem_file(region->file);
 		kfree(region);
 	}
 
@@ -1388,7 +1301,7 @@ static int audio_release(struct inode *inode, struct file *file)
 	auddev_unregister_evt_listner(AUDDEV_CLNT_DEC, audio->dec_id);
 	audio_disable(audio);
 	audlpa_async_flush(audio);
-	audpcm_reset_ion_region(audio);
+	audlpa_reset_pmem_region(audio);
 
 	msm_adsp_put(audio->audplay);
 	audpp_adec_free(audio->dec_id);
@@ -1399,12 +1312,13 @@ static int audio_release(struct inode *inode, struct file *file)
 	audio->event_abort = 1;
 	wake_up(&audio->event_wait);
 	audlpa_reset_event_queue(audio);
+	iounmap(audio->data);
+	pmem_kfree(audio->phys);
 	mutex_unlock(&audio->lock);
 #ifdef CONFIG_DEBUG_FS
 	if (audio->dentry)
 		debugfs_remove(audio->dentry);
 #endif
-	ion_client_destroy(audio->client);
 	kfree(audio);
 	return 0;
 }
@@ -1575,7 +1489,7 @@ static int audio_open(struct inode *inode, struct file *file)
 	spin_lock_init(&audio->dsp_lock);
 	init_waitqueue_head(&audio->write_wait);
 	INIT_LIST_HEAD(&audio->out_queue);
-	INIT_LIST_HEAD(&audio->ion_region_queue);
+	INIT_LIST_HEAD(&audio->pmem_region_queue);
 	INIT_LIST_HEAD(&audio->free_event_queue);
 	INIT_LIST_HEAD(&audio->event_queue);
 	init_waitqueue_head(&audio->wait);
@@ -1636,19 +1550,13 @@ static int audio_open(struct inode *inode, struct file *file)
 			break;
 		}
 	}
-
-	audio->client = msm_ion_client_create(UINT_MAX, "Audio_LPA_Client");
-	if (IS_ERR_OR_NULL(audio->client)) {
-		pr_err("Unable to create ION client\n");
-		goto err;
-	}
-	MM_DBG("Ion client created\n");
-
 done:
 	return rc;
 event_err:
 	msm_adsp_put(audio->audplay);
 err:
+	iounmap(audio->data);
+	pmem_kfree(audio->phys);
 	audpp_adec_free(audio->dec_id);
 	MM_INFO("audio instance 0x%08x freeing\n", (int)audio);
 	kfree(audio);

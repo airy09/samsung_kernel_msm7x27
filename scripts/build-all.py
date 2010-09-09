@@ -1,6 +1,6 @@
 #! /usr/bin/env python
 
-# Copyright (c) 2009-2011, Code Aurora Forum. All rights reserved.
+# Copyright (c) 2009, Code Aurora Forum. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
@@ -83,11 +83,9 @@ def update_config(file, str):
 def scan_configs():
     """Get the full list of defconfigs appropriate for this tree."""
     names = {}
-    for n in glob.glob('arch/arm/configs/[fm]sm[0-9-]*_defconfig'):
+    for n in glob.glob('arch/arm/configs/msm[0-9]*_defconfig'):
         names[os.path.basename(n)[:-10]] = n
     for n in glob.glob('arch/arm/configs/qsd*_defconfig'):
-        names[os.path.basename(n)[:-10]] = n
-    for n in glob.glob('arch/arm/configs/apq*_defconfig'):
         names[os.path.basename(n)[:-10]] = n
     return names
 
@@ -139,7 +137,6 @@ def build(target):
         os.mkdir(dest_dir)
     defconfig = 'arch/arm/configs/%s_defconfig' % target
     dotconfig = '%s/.config' % dest_dir
-    savedefconfig = '%s/defconfig' % dest_dir
     shutil.copyfile(defconfig, dotconfig)
 
     devnull = open('/dev/null', 'r')
@@ -162,11 +159,7 @@ def build(target):
 
     # Copy the defconfig back.
     if all_options.configs or all_options.updateconfigs:
-        devnull = open('/dev/null', 'r')
-        subprocess.check_call(['make', 'O=%s' % dest_dir,
-            'savedefconfig'], env=make_env, stdin=devnull)
-        devnull.close()
-        shutil.copyfile(savedefconfig, defconfig)
+        shutil.copyfile(dotconfig, defconfig)
 
 def build_many(allconf, targets):
     print "Building %d target(s)" % len(targets)
@@ -179,8 +172,6 @@ def build_many(allconf, targets):
             [target for target in failed_targets]))
 
 def main():
-    global make_command
-
     check_kernel()
     check_build()
 
@@ -216,9 +207,6 @@ def main():
     parser.add_option('-k', '--keep-going', action='store_true',
             dest='keep_going', default=False,
             help="Keep building other targets if a target fails")
-    parser.add_option('-m', '--make-target', action='append',
-            help='Build the indicated make target (default: %s)' %
-                 ' '.join(make_command))
 
     (options, args) = parser.parse_args()
     global all_options
@@ -231,9 +219,8 @@ def main():
         sys.exit(0)
 
     if options.oldconfig:
+        global make_command
         make_command = ["oldconfig"]
-    elif options.make_target:
-        make_command = options.make_target
 
     if options.jobs:
         make_command.append("-j%d" % options.jobs)

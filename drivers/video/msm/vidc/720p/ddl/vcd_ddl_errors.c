@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -9,9 +9,14 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
  */
 
-#include <media/msm/vidc_type.h>
+#include "vidc_type.h"
 #include "vcd_ddl_utils.h"
 #include "vcd_ddl.h"
 
@@ -136,9 +141,6 @@
 static void ddl_handle_npf_decoding_error(
 	struct ddl_context *ddl_context);
 
-static u32 ddl_handle_seqhdr_fail_error(
-	struct ddl_context *ddl_context);
-
 void ddl_hw_fatal_cb(struct ddl_context *ddl_context)
 {
 	/* Invalidate the command state */
@@ -189,7 +191,6 @@ static u32 ddl_handle_hw_fatal_errors(struct ddl_context
 
 	case VSP_NOT_READY:
 	case BUFFER_FULL_STATE:
-	case NULL_DB_POINTER:
 		ERR("HW FATAL ERROR");
 		ddl_hw_fatal_cb(ddl_context);
 		status = true;
@@ -231,6 +232,12 @@ static u32 ddl_handle_client_fatal_errors(struct ddl_context
 	u32 status = false;
 
 	switch (ddl_context->cmd_err_status) {
+	case UNSUPPORTED_FEATURE_IN_PROFILE:
+	case RESOLUTION_NOT_SUPPORTED:
+	case HEADER_NOT_FOUND:
+	case INVALID_SPS_ID:
+	case INVALID_PPS_ID:
+
 	case MB_NUM_INVALID:
 	case FRAME_RATE_NOT_SUPPORTED:
 	case INVALID_QP_VALUE:
@@ -245,6 +252,7 @@ static u32 ddl_handle_client_fatal_errors(struct ddl_context
 	case NULL_COMAMND_CONTROL_COMM_POINTER:
 	case NULL_METADATA_INPUT_POINTER:
 	case NULL_DPB_POINTER:
+	case NULL_DB_POINTER:
 	case NULL_COMV_POINTER:
 		{
 			status = true;
@@ -287,10 +295,6 @@ static u32 ddl_handle_core_recoverable_errors(struct ddl_context \
 	u32   vcd_status = VCD_S_SUCCESS;
 	u32   vcd_event = VCD_EVT_RESP_INPUT_DONE;
 	u32   eos = false, pending_display = 0, release_mask = 0;
-
-	if (ddl->decoding)
-		if (ddl_handle_seqhdr_fail_error(ddl_context))
-			return true;
 
 	if (ddl_context->cmd_state != DDL_CMD_DECODE_FRAME &&
 		ddl_context->cmd_state != DDL_CMD_ENCODE_FRAME) {
@@ -353,25 +357,12 @@ static u32 ddl_handle_core_recoverable_errors(struct ddl_context \
 	case INVALID_MMCO:
 	case INVALID_PIC_REORDERING:
 	case INVALID_POC_TYPE:
-		{
-			vcd_status = VCD_ERR_BITSTREAM_ERR;
-			break;
-		}
 	case ACTIVE_SPS_NOT_PRESENT:
 	case ACTIVE_PPS_NOT_PRESENT:
 		{
-			if (ddl->codec_data.decoder.idr_only_decoding) {
-				DBG("Consider warnings as errors in idr mode");
-				ddl_client_fatal_cb(ddl_context);
-				return true;
-			}
 			vcd_status = VCD_ERR_BITSTREAM_ERR;
 			break;
 		}
-	case PROFILE_UNKOWN:
-		if (ddl->decoding)
-			vcd_status = VCD_ERR_BITSTREAM_ERR;
-		break;
 	}
 
 	if (!vcd_status && vcd_event == VCD_EVT_RESP_INPUT_DONE)
@@ -544,66 +535,4 @@ void ddl_handle_npf_decoding_error(struct ddl_context *ddl_context)
 		(void *)ddl,
 		ddl->ddl_context->client_data);
 	ddl_decode_frame_run(ddl);
-}
-
-u32 ddl_handle_seqhdr_fail_error(struct ddl_context *ddl_context)
-{
-	struct ddl_client_context *ddl = ddl_context->current_ddl;
-	struct ddl_decoder_data *decoder = &ddl->codec_data.decoder;
-	u32 status = false;
-	if (ddl_context->cmd_state == DDL_CMD_HEADER_PARSE &&
-		DDLCLIENT_STATE_IS(ddl, DDL_CLIENT_WAIT_FOR_INITCODECDONE)) {
-		switch (ddl_context->cmd_err_status) {
-		case UNSUPPORTED_FEATURE_IN_PROFILE:
-		case HEADER_NOT_FOUND:
-		case INVALID_SPS_ID:
-		case INVALID_PPS_ID:
-		case RESOLUTION_NOT_SUPPORTED:
-		case PROFILE_UNKOWN:
-			ERR("SEQ-HDR-FAILED!!!");
-			if ((ddl_context->cmd_err_status ==
-				 RESOLUTION_NOT_SUPPORTED) &&
-				(decoder->codec.codec == VCD_CODEC_H264 ||
-				decoder->codec.codec == VCD_CODEC_H263 ||
-				decoder->codec.codec == VCD_CODEC_MPEG4 ||
-				decoder->codec.codec == VCD_CODEC_VC1_RCV ||
-				decoder->codec.codec == VCD_CODEC_VC1)) {
-				ddl_client_fatal_cb(ddl_context);
-				status = true;
-				break;
-			}
-			if (decoder->header_in_start) {
-				decoder->header_in_start = false;
-				ddl_context->ddl_callback(VCD_EVT_RESP_START,
-					VCD_ERR_SEQHDR_PARSE_FAIL,
-					NULL, 0, (void *)ddl,
-					ddl_context->client_data);
-			} else {
-				if (ddl->input_frame.vcd_frm.flags &
-					VCD_FRAME_FLAG_EOS)
-					ddl->input_frame.frm_trans_end = false;
-				else
-					ddl->input_frame.frm_trans_end = true;
-				ddl_decode_dynamic_property(ddl, false);
-				ddl_context->ddl_callback(
-					VCD_EVT_RESP_INPUT_DONE,
-					VCD_ERR_SEQHDR_PARSE_FAIL,
-					&ddl->input_frame,
-					sizeof(struct ddl_frame_data_tag),
-					(void *)ddl, ddl_context->client_data);
-				if (ddl->input_frame.vcd_frm.flags &
-					VCD_FRAME_FLAG_EOS)
-					ddl_context->ddl_callback(
-						VCD_EVT_RESP_EOS_DONE,
-						VCD_S_SUCCESS, NULL,
-						0, (void *)ddl,
-						ddl_context->client_data);
-			}
-			ddl_move_client_state(ddl,
-				DDL_CLIENT_WAIT_FOR_INITCODEC);
-			DDL_IDLE(ddl_context);
-			status = true;
-		}
-	}
-	return status;
 }

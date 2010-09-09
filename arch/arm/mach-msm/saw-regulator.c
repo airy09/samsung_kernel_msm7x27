@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -8,203 +8,113 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  */
-
-#define pr_fmt(fmt) "%s: " fmt, __func__
 
 #include <linux/err.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/delay.h>
-#include <linux/slab.h>
-#include <linux/string.h>
 #include <linux/platform_device.h>
 #include <linux/regulator/driver.h>
-#include <linux/regulator/machine.h>
-#include <linux/mfd/pmic8901.h>
 
 #include "spm.h"
+#include "saw-regulator.h"
 
-#define FTSMPS_VCTRL_BAND_MASK		0xC0
-#define FTSMPS_VCTRL_BAND_1		0x40
-#define FTSMPS_VCTRL_BAND_2		0x80
-#define FTSMPS_VCTRL_BAND_3		0xC0
-#define FTSMPS_VCTRL_VPROG_MASK		0x3F
+#define SMPS_BAND_MASK			0xC0
+#define SMPS_VPROG_MASK			0x3F
 
-#define FTSMPS_BAND1_UV_MIN		350000
-#define FTSMPS_BAND1_UV_MAX		650000
-/* 3 LSB's of program voltage must be 0 in band 1. */
-/* Logical step size */
-#define FTSMPS_BAND1_UV_LOG_STEP	50000
-/* Physical step size */
-#define FTSMPS_BAND1_UV_PHYS_STEP	6250
+#define SMPS_BAND_1			0x40
+#define SMPS_BAND_2			0x80
+#define SMPS_BAND_3			0xC0
 
-#define FTSMPS_BAND2_UV_MIN		700000
-#define FTSMPS_BAND2_UV_MAX		1400000
-#define FTSMPS_BAND2_UV_STEP		12500
+#define SMPS_BAND_1_VMIN		350000
+#define SMPS_BAND_1_VMAX		650000
+#define SMPS_BAND_1_VSTEP		6250
 
-#define FTSMPS_BAND3_UV_MIN		1400000
-#define FTSMPS_BAND3_UV_SET_POINT_MIN	1500000
-#define FTSMPS_BAND3_UV_MAX		3300000
-#define FTSMPS_BAND3_UV_STEP		50000
+#define SMPS_BAND_2_VMIN		700000
+#define SMPS_BAND_2_VMAX		1487500
+#define SMPS_BAND_2_VSTEP		12500
 
-struct saw_vreg {
-	struct regulator_desc		desc;
-	struct regulator_dev		*rdev;
-	char				*name;
-	int				uV;
-};
+#define SMPS_BAND_3_VMIN		1400000
+#define SMPS_BAND_3_VMAX		3300000
+#define SMPS_BAND_3_VSTEP		50000
 
-/* Minimum core operating voltage */
-#define MIN_CORE_VOLTAGE		950000
-
-/* Specifies the PMIC internal slew rate in uV/us. */
-#define REGULATOR_SLEW_RATE		1250
-
-static int saw_get_voltage(struct regulator_dev *rdev)
+static int saw_set_voltage(struct regulator_dev *dev, int min_uV, int max_uV)
 {
-	struct saw_vreg *vreg = rdev_get_drvdata(rdev);
-
-	return vreg->uV;
-}
-
-static int saw_set_voltage(struct regulator_dev *rdev, int min_uV, int max_uV,
-			   unsigned *selector)
-{
-	struct saw_vreg *vreg = rdev_get_drvdata(rdev);
-	int uV = min_uV;
 	int rc;
-	u8 vprog, band;
+	u8 vlevel, band;
 
-	if (uV < FTSMPS_BAND1_UV_MIN && max_uV >= FTSMPS_BAND1_UV_MIN)
-		uV = FTSMPS_BAND1_UV_MIN;
-
-	if (uV < FTSMPS_BAND1_UV_MIN || uV > FTSMPS_BAND3_UV_MAX) {
-		pr_err("%s: request v=[%d, %d] is outside possible "
-			"v=[%d, %d]\n", vreg->name, min_uV, max_uV,
-			FTSMPS_BAND1_UV_MIN, FTSMPS_BAND3_UV_MAX);
-		return -EINVAL;
-	}
-
-	/* Round up for set points in the gaps between bands. */
-	if (uV > FTSMPS_BAND1_UV_MAX && uV < FTSMPS_BAND2_UV_MIN)
-		uV = FTSMPS_BAND2_UV_MIN;
-	else if (uV > FTSMPS_BAND2_UV_MAX
-			&& uV < FTSMPS_BAND3_UV_SET_POINT_MIN)
-		uV = FTSMPS_BAND3_UV_SET_POINT_MIN;
-
-	if (uV > FTSMPS_BAND2_UV_MAX) {
-		vprog = (uV - FTSMPS_BAND3_UV_MIN + FTSMPS_BAND3_UV_STEP - 1)
-			/ FTSMPS_BAND3_UV_STEP;
-		band = FTSMPS_VCTRL_BAND_3;
-		uV = FTSMPS_BAND3_UV_MIN + vprog * FTSMPS_BAND3_UV_STEP;
-	} else if (uV > FTSMPS_BAND1_UV_MAX) {
-		vprog = (uV - FTSMPS_BAND2_UV_MIN + FTSMPS_BAND2_UV_STEP - 1)
-			/ FTSMPS_BAND2_UV_STEP;
-		band = FTSMPS_VCTRL_BAND_2;
-		uV = FTSMPS_BAND2_UV_MIN + vprog * FTSMPS_BAND2_UV_STEP;
+	if (min_uV < SMPS_BAND_2_VMIN) {
+		vlevel = ((min_uV - SMPS_BAND_1_VMIN) / SMPS_BAND_1_VSTEP);
+		band = SMPS_BAND_1;
+	} else if (min_uV < SMPS_BAND_3_VMIN) {
+		vlevel = ((min_uV - SMPS_BAND_2_VMIN) / SMPS_BAND_2_VSTEP);
+		band = SMPS_BAND_2;
 	} else {
-		vprog = (uV - FTSMPS_BAND1_UV_MIN
-				+ FTSMPS_BAND1_UV_LOG_STEP - 1)
-			/ FTSMPS_BAND1_UV_LOG_STEP;
-		uV = FTSMPS_BAND1_UV_MIN + vprog * FTSMPS_BAND1_UV_LOG_STEP;
-		vprog *= FTSMPS_BAND1_UV_LOG_STEP / FTSMPS_BAND1_UV_PHYS_STEP;
-		band = FTSMPS_VCTRL_BAND_1;
+		vlevel = ((min_uV - SMPS_BAND_3_VMIN) / SMPS_BAND_3_VSTEP);
+		band = SMPS_BAND_3;
 	}
 
-	if (uV > max_uV) {
-		pr_err("%s: request v=[%d, %d] cannot be met by any setpoint\n",
-			vreg->name, min_uV, max_uV);
-		return -EINVAL;
-	}
-
-	rc = msm_spm_set_vdd(rdev_get_id(rdev), band | vprog);
-	if (!rc) {
-		if (uV > vreg->uV) {
-			/* Wait for voltage to stabalize. */
-			udelay((uV - vreg->uV) / REGULATOR_SLEW_RATE);
-		}
-		vreg->uV = uV;
-	} else {
-		pr_err("%s: msm_spm_set_vdd failed %d\n", vreg->name, rc);
-	}
+	rc = msm_spm_set_vdd(rdev_get_id(dev), vlevel | band);
+	if (rc)
+		pr_err("%s: msm_spm_set_vdd failed %d\n", __func__, rc);
 
 	return rc;
 }
 
 static struct regulator_ops saw_ops = {
-	.get_voltage = saw_get_voltage,
 	.set_voltage = saw_set_voltage,
 };
+
+static struct regulator_desc saw_descrip[] = {
+	{
+		.name	= "8901_s0",
+		.id	= SAW_VREG_ID_S0,
+		.ops	= &saw_ops,
+		.type	= REGULATOR_VOLTAGE,
+		.owner	= THIS_MODULE,
+	},
+	{
+		.name	= "8901_s1",
+		.id	= SAW_VREG_ID_S1,
+		.ops	= &saw_ops,
+		.type	= REGULATOR_VOLTAGE,
+		.owner	= THIS_MODULE,
+	},
+};
+
+static struct regulator_dev *saw_rdev[2];
 
 static int __devinit saw_probe(struct platform_device *pdev)
 {
 	struct regulator_init_data *init_data;
-	struct saw_vreg *vreg;
 	int rc = 0;
 
-	if (!pdev->dev.platform_data) {
-		pr_err("platform data required.\n");
+	if (pdev == NULL)
 		return -EINVAL;
-	}
+
+	if (pdev->id != SAW_VREG_ID_S0 && pdev->id != SAW_VREG_ID_S1)
+		return -ENODEV;
 
 	init_data = pdev->dev.platform_data;
-	if (!init_data->constraints.name) {
-		pr_err("regulator name must be specified in constraints.\n");
-		return -EINVAL;
-	}
 
-	vreg = kzalloc(sizeof(struct saw_vreg), GFP_KERNEL);
-	if (!vreg) {
-		pr_err("kzalloc failed.\n");
-		return -ENOMEM;
-	}
+	saw_rdev[pdev->id] = regulator_register(&saw_descrip[pdev->id],
+			&pdev->dev, init_data, NULL);
+	if (IS_ERR(saw_rdev[pdev->id]))
+		rc = PTR_ERR(saw_rdev[pdev->id]);
 
-	vreg->name = kstrdup(init_data->constraints.name, GFP_KERNEL);
-	if (!vreg->name) {
-		pr_err("kzalloc failed.\n");
-		rc = -ENOMEM;
-		goto free_vreg;
-	}
-
-	vreg->desc.name  = vreg->name;
-	vreg->desc.id    = pdev->id;
-	vreg->desc.ops   = &saw_ops;
-	vreg->desc.type  = REGULATOR_VOLTAGE;
-	vreg->desc.owner = THIS_MODULE;
-	vreg->uV	 = MIN_CORE_VOLTAGE;
-
-	vreg->rdev = regulator_register(&vreg->desc, &pdev->dev, init_data,
-					vreg);
-	if (IS_ERR(vreg->rdev)) {
-		rc = PTR_ERR(vreg->rdev);
-		pr_err("regulator_register failed, rc=%d.\n", rc);
-		goto free_name;
-	}
-
-	platform_set_drvdata(pdev, vreg);
-
-	pr_info("id=%d, name=%s\n", pdev->id, vreg->name);
-
-	return rc;
-
-free_name:
-	kfree(vreg->name);
-free_vreg:
-	kfree(vreg);
+	pr_info("%s: id=%d, rc=%d\n", __func__, pdev->id, rc);
 
 	return rc;
 }
 
 static int __devexit saw_remove(struct platform_device *pdev)
 {
-	struct saw_vreg *vreg = platform_get_drvdata(pdev);
-
-	regulator_unregister(vreg->rdev);
-	kfree(vreg->name);
-	kfree(vreg);
-	platform_set_drvdata(pdev, NULL);
-
+	regulator_unregister(saw_rdev[pdev->id]);
 	return 0;
 }
 

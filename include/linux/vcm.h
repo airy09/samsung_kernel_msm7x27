@@ -1,13 +1,29 @@
 /* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *     * Redistributions of source code must retain the above copyright
+ *       notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above
+ *       copyright notice, this list of conditions and the following
+ *       disclaimer in the documentation and/or other materials provided
+ *       with the distribution.
+ *     * Neither the name of Code Aurora Forum, Inc. nor the names of its
+ *       contributors may be used to endorse or promote products derived
+ *       from this software without specific prior written permission.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+ * BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+ * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
+ * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
@@ -346,7 +362,7 @@ enum memtype_t vcm_get_memtype_of_physalloc(struct physmem *physmem);
  * This function returns non-zero if a association is made. It returns 0
  * if any of its parameters are invalid or VCM_ATTR_VALID is not present.
  */
-struct avcm *vcm_assoc(struct vcm *vcm, struct device *dev, u32 attr);
+struct avcm *vcm_assoc(struct vcm *vcm, size_t dev, u32 attr);
 
 
 /**
@@ -546,7 +562,7 @@ struct res *vcm_get_res(unsigned long dev_addr, struct vcm *vcm);
  * error it returns:
  * 1			res_id is invalid.
  */
-size_t vcm_translate(struct device *src_dev, struct vcm *src_vcm,
+size_t vcm_translate(size_t src_dev, struct vcm *src_vcm,
 		     struct vcm *dst_vcm);
 
 
@@ -607,13 +623,13 @@ size_t vcm_get_cont_memtype_len(enum memtype_t memtype);
 
 /**
  * vcm_dev_addr_to_phys_addr() - Perform a device address page-table lookup.
- * @vcm:		VCM to use for translation.
+ * @dev:		The device that has the table.
  * @dev_addr:		The device address to map.
  *
  * This function returns the pa of a va from a device's page-table. It will
  * fault if the dev_addr is not mapped.
  */
-phys_addr_t vcm_dev_addr_to_phys_addr(struct vcm *vcm, unsigned long dev_addr);
+phys_addr_t vcm_dev_addr_to_phys_addr(size_t dev, unsigned long dev_addr);
 
 
 /*
@@ -632,7 +648,7 @@ phys_addr_t vcm_dev_addr_to_phys_addr(struct vcm *vcm, unsigned long dev_addr);
  * This function returns 0 for a successful registration or:
  * -EINVAL		The arguments are invalid.
  */
-int vcm_hook(struct device *dev, vcm_handler handler, void *data);
+int vcm_hook(size_t dev, vcm_handler handler, void *data);
 
 
 

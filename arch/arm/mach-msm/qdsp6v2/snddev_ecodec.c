@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -8,6 +8,11 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  *
  */
 #include <linux/module.h>
@@ -22,11 +27,10 @@
 #include <asm/io.h>
 #include <mach/clk.h>
 #include <mach/qdsp6v2/audio_dev_ctl.h>
-#include <sound/apr_audio.h>
-#include <sound/q6afe.h>
-#include "snddev_ecodec.h"
 
-#define ECODEC_SAMPLE_RATE 8000
+#include "snddev_ecodec.h"
+#include "q6afe.h"
+#include "apr_audio.h"
 
 /* Context for each external codec device */
 struct snddev_ecodec_state {
@@ -141,12 +145,18 @@ static int get_aux_pcm_gpios(struct platform_device *pdev)
 
 	the_aux_pcm_state.clkin_a = res->start;
 
+	pr_info("%s: dout = %u, din = %u , syncout = %u, clkin_a =%u\n",
+		__func__, the_aux_pcm_state.dout, the_aux_pcm_state.din,
+		the_aux_pcm_state.syncout, the_aux_pcm_state.clkin_a);
+
 	return rc;
 }
 
 static int aux_pcm_probe(struct platform_device *pdev)
 {
 	int rc = 0;
+
+	pr_info("%s:\n", __func__);
 
 	rc = get_aux_pcm_gpios(pdev);
 	if (rc < 0) {
@@ -165,7 +175,7 @@ static int snddev_ecodec_open(struct msm_snddev_info *dev_info)
 {
 	int rc;
 	struct snddev_ecodec_drv_state *drv = &snddev_ecodec_drv;
-	union afe_port_config afe_config;
+	struct afe_port_pcm_cfg pcm_cfg;
 
 	pr_debug("%s\n", __func__);
 
@@ -195,20 +205,23 @@ static int snddev_ecodec_open(struct msm_snddev_info *dev_info)
 
 	clk_reset(drv->ecodec_clk, CLK_RESET_ASSERT);
 
-	afe_config.pcm.mode = AFE_PCM_CFG_MODE_PCM;
-	afe_config.pcm.sync = AFE_PCM_CFG_SYNC_INT;
-	afe_config.pcm.frame = AFE_PCM_CFG_FRM_256BPF;
-	afe_config.pcm.quant = AFE_PCM_CFG_QUANT_LINEAR_NOPAD;
-	afe_config.pcm.slot = 0;
-	afe_config.pcm.data = AFE_PCM_CFG_CDATAOE_MASTER;
+	pcm_cfg.port_id = PCM_RX;
+	pcm_cfg.mode = AFE_PCM_CFG_MODE_PCM;
+	pcm_cfg.sync = AFE_PCM_CFG_SYNC_INT;
+	pcm_cfg.frame = AFE_PCM_CFG_FRM_256BPF;
+	pcm_cfg.quant = AFE_PCM_CFG_QUANT_LINEAR_NOPAD;
+	pcm_cfg.slot = 0;
+	pcm_cfg.data = AFE_PCM_CFG_CDATAOE_MASTER;
 
-	rc = afe_open(PCM_RX, &afe_config, ECODEC_SAMPLE_RATE);
+	rc = afe_open_pcmif(pcm_cfg);
 	if (rc < 0) {
 		pr_err("%s: afe open failed for PCM_RX\n", __func__);
 		goto err_rx_afe;
 	}
 
-	rc = afe_open(PCM_TX, &afe_config, ECODEC_SAMPLE_RATE);
+	pcm_cfg.port_id = PCM_TX;
+
+	rc = afe_open_pcmif(pcm_cfg);
 	if (rc < 0) {
 		pr_err("%s: afe open failed for PCM_TX\n", __func__);
 		goto err_tx_afe;
@@ -280,7 +293,7 @@ int snddev_ecodec_set_freq(struct msm_snddev_info *dev_info, u32 rate)
 		rc = -EINVAL;
 		goto error;
 	}
-	return ECODEC_SAMPLE_RATE;
+	return 8000;
 
 error:
 	return rc;
@@ -292,6 +305,8 @@ static int snddev_ecodec_probe(struct platform_device *pdev)
 	struct snddev_ecodec_data *pdata;
 	struct msm_snddev_info *dev_info;
 	struct snddev_ecodec_state *ecodec;
+
+	pr_info("%s:\n", __func__);
 
 	if (!pdev || !pdev->dev.platform_data) {
 		printk(KERN_ALERT "Invalid caller\n");
@@ -315,6 +330,7 @@ static int snddev_ecodec_probe(struct platform_device *pdev)
 
 	dev_info->name = pdata->name;
 	dev_info->copp_id = pdata->copp_id;
+	dev_info->acdb_id = pdata->acdb_id;
 	dev_info->private_data = (void *)ecodec;
 	dev_info->dev_ops.open = snddev_ecodec_open;
 	dev_info->dev_ops.close = snddev_ecodec_close;
@@ -326,7 +342,7 @@ static int snddev_ecodec_probe(struct platform_device *pdev)
 	msm_snddev_register(dev_info);
 
 	ecodec->data = pdata;
-	ecodec->sample_rate = ECODEC_SAMPLE_RATE;	/* Default to 8KHz */
+	ecodec->sample_rate = 8000;	/* Default to 8KHz */
 error:
 	return rc;
 }
@@ -340,6 +356,8 @@ int __init snddev_ecodec_init(void)
 {
 	int rc = 0;
 	struct snddev_ecodec_drv_state *drv = &snddev_ecodec_drv;
+
+	pr_info("%s:\n", __func__);
 
 	mutex_init(&drv->dev_lock);
 	drv->ref_cnt = 0;
@@ -363,6 +381,7 @@ int __init snddev_ecodec_init(void)
 				__func__);
 		goto error_ecodec_platform_driver;
 	}
+	pr_info("%s: done\n", __func__);
 
 	return 0;
 

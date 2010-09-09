@@ -8,13 +8,12 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  */
-#include <linux/module.h>
-#include <mach/irqs.h>
-#include <mach/gpiomux.h>
+#include "gpiomux.h"
 
-static int __init gpiomux_init(void)
-{
-	return msm_gpiomux_init(NR_GPIO_IRQS);
-}
-postcore_initcall(gpiomux_init);
+struct msm_gpiomux_config msm_gpiomux_configs[GPIOMUX_NGPIOS] = {};

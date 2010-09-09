@@ -9,6 +9,11 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
  */
 
 #include "mt9p012.h"
@@ -62,7 +67,7 @@ struct reg_struct const mt9p012_reg_pat[2] = {
 		972,
 
 		/* line_length_pck         REG=0x300C */
-		3659,
+		3784,
 
 		/* frame_length_lines      REG=0x300A */
 		1074,

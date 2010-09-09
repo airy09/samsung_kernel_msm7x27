@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -9,6 +9,11 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
  */
 #include <linux/module.h>
 #include <linux/types.h>
@@ -18,10 +23,10 @@
 #include <linux/debugfs.h>
 #include <linux/slab.h>
 #include <asm/uaccess.h>
-#include <mach/qdsp6v2/audio_dev_ctl.h>
+#include <mach/qdsp5v2/audio_dev_ctl.h>
 #include <mach/debug_mm.h>
-#include <sound/q6afe.h>
-#include <sound/apr_audio.h>
+#include "q6afe.h"
+#include "apr_audio.h"
 #include "snddev_hdmi.h"
 
 static DEFINE_MUTEX(snddev_hdmi_lock);
@@ -30,11 +35,10 @@ static int snddev_hdmi_active;
 static int snddev_hdmi_open(struct msm_snddev_info *dev_info)
 {
 	int rc = 0;
-	union afe_port_config afe_config;
 	struct snddev_hdmi_data *snddev_hdmi_data;
 
 	if (!dev_info) {
-		pr_err("msm_snddev_info is null\n");
+		MM_ERR("msm_snddev_info is null\n");
 		return -EINVAL;
 	}
 
@@ -43,32 +47,22 @@ static int snddev_hdmi_open(struct msm_snddev_info *dev_info)
 	mutex_lock(&snddev_hdmi_lock);
 
 	if (snddev_hdmi_active) {
-		pr_err("HDMI snddev already active\n");
+		MM_ERR("HDMI snddev already active\n");
 		mutex_unlock(&snddev_hdmi_lock);
 		return -EBUSY;
 	}
 
-	if (snddev_hdmi_data->on_apps) {
-		snddev_hdmi_active = 1;
-		pr_debug("%s open done\n", dev_info->name);
-		mutex_unlock(&snddev_hdmi_lock);
-		return 0;
-	}
-
-	afe_config.hdmi.channel_mode = snddev_hdmi_data->channel_mode;
-	afe_config.hdmi.bitwidth = 16;
-	afe_config.hdmi.data_type = 0;
-	rc = afe_open(snddev_hdmi_data->copp_id, &afe_config,
-		dev_info->sample_rate);
+	rc = afe_open(HDMI_RX, dev_info->sample_rate,
+		      snddev_hdmi_data->channel_mode);
 
 	if (rc < 0) {
-		pr_err("afe_open failed\n");
+		MM_ERR("afe_open failed\n");
 		mutex_unlock(&snddev_hdmi_lock);
 		return -EINVAL;
 	}
 	snddev_hdmi_active = 1;
 
-	pr_debug("%s open done\n", dev_info->name);
+	MM_DBG("%s open done\n", dev_info->name);
 
 	mutex_unlock(&snddev_hdmi_lock);
 
@@ -77,41 +71,28 @@ static int snddev_hdmi_open(struct msm_snddev_info *dev_info)
 
 static int snddev_hdmi_close(struct msm_snddev_info *dev_info)
 {
-
-	struct snddev_hdmi_data *snddev_hdmi_data;
-
 	if (!dev_info) {
-		pr_err("msm_snddev_info is null\n");
+		MM_ERR("msm_snddev_info is null\n");
 		return -EINVAL;
 	}
 
-	snddev_hdmi_data = dev_info->private_data;
-
 	if (!dev_info->opened) {
-		pr_err("calling close device with out opening the"
+		MM_ERR("calling close device with out opening the"
 		       " device\n");
 		return -EPERM;
 	}
 	mutex_lock(&snddev_hdmi_lock);
 
 	if (!snddev_hdmi_active) {
-		pr_err("HDMI snddev not active\n");
+		MM_ERR("HDMI snddev not active\n");
 		mutex_unlock(&snddev_hdmi_lock);
 		return -EPERM;
 	}
 	snddev_hdmi_active = 0;
 
-	if (snddev_hdmi_data->on_apps) {
-		pr_debug("%s Closed\n", dev_info->name);
-
-		mutex_unlock(&snddev_hdmi_lock);
-		return 0;
-	}
-
-
 	afe_close(HDMI_RX);
 
-	pr_debug("%s closed\n", dev_info->name);
+	MM_DBG("%s closed\n", dev_info->name);
 	mutex_unlock(&snddev_hdmi_lock);
 
 	return 0;
@@ -120,7 +101,7 @@ static int snddev_hdmi_close(struct msm_snddev_info *dev_info)
 static int snddev_hdmi_set_freq(struct msm_snddev_info *dev_info, u32 req_freq)
 {
 	if (req_freq != 48000) {
-		pr_debug("Unsupported Frequency:%d\n", req_freq);
+		MM_DBG("Unsupported Frequency:%d\n", req_freq);
 		return -EINVAL;
 	}
 	return 48000;
@@ -139,13 +120,13 @@ static int snddev_hdmi_probe(struct platform_device *pdev)
 
 	pdata = pdev->dev.platform_data;
 	if (!(pdata->capability & SNDDEV_CAP_RX)) {
-		pr_err("invalid device data either RX or TX\n");
+		MM_ERR("invalid device data either RX or TX\n");
 		return -ENODEV;
 	}
 
 	dev_info = kzalloc(sizeof(struct msm_snddev_info), GFP_KERNEL);
 	if (!dev_info) {
-		pr_err("unable to allocate memeory for msm_snddev_info\n");
+		MM_ERR("unable to allocate memeory for msm_snddev_info\n");
 		return -ENOMEM;
 	}
 
@@ -161,7 +142,7 @@ static int snddev_hdmi_probe(struct platform_device *pdev)
 	msm_snddev_register(dev_info);
 	dev_info->sample_rate = pdata->default_sample_rate;
 
-	pr_debug("probe done for %s\n", pdata->name);
+	MM_DBG("probe done for %s\n", pdata->name);
 	return rc;
 }
 
@@ -177,17 +158,17 @@ static int __init snddev_hdmi_init(void)
 	rc = platform_driver_register(&snddev_hdmi_driver);
 	if (IS_ERR_VALUE(rc)) {
 
-		pr_err("platform_driver_register failed.\n");
+		MM_ERR("platform_driver_register failed.\n");
 		goto error_platform_driver;
 	}
 
-	pr_debug("snddev_hdmi_init : done\n");
+	MM_DBG("snddev_hdmi_init : done\n");
 
 	return 0;
 
 error_platform_driver:
 
-	pr_err("encounterd error\n");
+	MM_ERR("encounterd error\n");
 	return -ENODEV;
 }
 

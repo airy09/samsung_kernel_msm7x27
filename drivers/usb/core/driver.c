@@ -1215,6 +1215,18 @@ static int usb_suspend_both(struct usb_device *udev, pm_message_t msg)
 	 * and flush any outstanding URBs.
 	 */
 	} else {
+#ifdef CONFIG_USB_OTG
+		/* OTG supplement Rev 2.0 section 6.3
+		 * Unless an A-device enables b_hnp_enable before entering
+		 * suspend it shall also continue polling while the bus is
+		 * suspended.
+		 * We don't need to do HNP polling, as we are going to enable
+		 * b_hnp_enable before suspending.
+		 */
+		if (udev->bus->hnp_support &&
+			udev->portnum == udev->bus->otg_port)
+			cancel_delayed_work(&udev->bus->hnp_polling);
+#endif
 		udev->can_submit = 0;
 		for (i = 0; i < 16; ++i) {
 			usb_hcd_flush_endpoint(udev, udev->ep_out[i]);

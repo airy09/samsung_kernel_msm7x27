@@ -1,4 +1,4 @@
-/* Copyright (c) 2010, 2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -8,6 +8,11 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  */
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -15,7 +20,7 @@
 #include <linux/leds.h>
 #include <linux/workqueue.h>
 #include <linux/spinlock.h>
-#include <linux/mfd/pm8xxx/core.h>
+#include <linux/mfd/pmic8058.h>
 #include <linux/leds-pmic8058.h>
 
 #define SSBI_REG_ADDR_DRV_KEYPAD	0x48
@@ -34,18 +39,17 @@
 #define PM8058_DRV_LED_CTRL_SHIFT	0x03
 
 #define MAX_FLASH_CURRENT	300
-#define MAX_KEYPAD_CURRENT 300
 #define MAX_KEYPAD_BL_LEVEL	(1 << 4)
 #define MAX_LED_DRV_LEVEL	20 /* 2 * 20 mA */
 
 #define PMIC8058_LED_OFFSET(id) ((id) - PMIC8058_ID_LED_0)
 
 struct pmic8058_led_data {
-	struct device		*dev;
 	struct led_classdev	cdev;
 	int			id;
 	enum led_brightness	brightness;
 	u8			flags;
+	struct pm8058_chip	*pm_chip;
 	struct work_struct	work;
 	struct mutex		lock;
 	spinlock_t		value_lock;
@@ -72,8 +76,8 @@ static void kp_bl_set(struct pmic8058_led_data *led, enum led_brightness value)
 	led->reg_kp |= level;
 	spin_unlock_irqrestore(&led->value_lock, flags);
 
-	rc = pm8xxx_writeb(led->dev->parent, SSBI_REG_ADDR_DRV_KEYPAD,
-						led->reg_kp);
+	rc = pm8058_write(led->pm_chip, SSBI_REG_ADDR_DRV_KEYPAD,
+				 &led->reg_kp, 1);
 	if (rc)
 		pr_err("%s: can't set keypad backlight level\n", __func__);
 }
@@ -105,8 +109,8 @@ static void led_lc_set(struct pmic8058_led_data *led, enum led_brightness value)
 	tmp |= level;
 	spin_unlock_irqrestore(&led->value_lock, flags);
 
-	rc = pm8xxx_writeb(led->dev->parent, SSBI_REG_ADDR_LED_CTRL(offset),
-								tmp);
+	rc = pm8058_write(led->pm_chip,	SSBI_REG_ADDR_LED_CTRL(offset),
+			&tmp, 1);
 	if (rc) {
 		dev_err(led->cdev.dev, "can't set (%d) led value\n",
 				led->id);
@@ -159,10 +163,9 @@ led_flash_set(struct pmic8058_led_data *led, enum led_brightness value)
 	}
 	spin_unlock_irqrestore(&led->value_lock, flags);
 
-	rc = pm8xxx_writeb(led->dev->parent, reg_addr, reg_flash_led);
+	rc = pm8058_write(led->pm_chip, reg_addr, &reg_flash_led, 1);
 	if (rc)
-		pr_err("%s: can't set flash led%d level %d\n", __func__,
-			led->id, rc);
+		pr_err("%s: can't set flash led%d level\n", __func__, led->id);
 }
 
 int pm8058_set_flash_led_current(enum pmic8058_leds id, unsigned mA)
@@ -188,49 +191,6 @@ int pm8058_set_flash_led_current(enum pmic8058_leds id, unsigned mA)
 	return 0;
 }
 EXPORT_SYMBOL(pm8058_set_flash_led_current);
-
-int pm8058_set_led_current(enum pmic8058_leds id, unsigned mA)
-{
-	struct pmic8058_led_data *led;
-	int brightness = 0;
-
-	if ((id < PMIC8058_ID_LED_KB_LIGHT) || (id > PMIC8058_ID_FLASH_LED_1)) {
-		pr_err("%s: invalid LED ID (%d) specified\n", __func__, id);
-		return -EINVAL;
-	}
-
-	led = &led_data[id];
-	if (!led) {
-		pr_err("%s: flash led not available\n", __func__);
-		return -EINVAL;
-	}
-
-	switch (id) {
-	case PMIC8058_ID_LED_0:
-	case PMIC8058_ID_LED_1:
-	case PMIC8058_ID_LED_2:
-		brightness = mA / 2;
-		if (brightness  > led->cdev.max_brightness)
-			return -EINVAL;
-		led_lc_set(led, brightness);
-		break;
-
-	case PMIC8058_ID_LED_KB_LIGHT:
-	case PMIC8058_ID_FLASH_LED_0:
-	case PMIC8058_ID_FLASH_LED_1:
-		brightness = mA / 20;
-		if (brightness  > led->cdev.max_brightness)
-			return -EINVAL;
-		if (id == PMIC8058_ID_LED_KB_LIGHT)
-			kp_bl_set(led, brightness);
-		else
-			led_flash_set(led, brightness);
-		break;
-	}
-
-	return 0;
-}
-EXPORT_SYMBOL(pm8058_set_led_current);
 
 static void pmic8058_led_set(struct led_classdev *led_cdev,
 	enum led_brightness value)
@@ -294,38 +254,46 @@ static int pmic8058_led_probe(struct platform_device *pdev)
 	struct pmic8058_led_data *led_dat;
 	struct pmic8058_led *curr_led;
 	int rc, i = 0;
+	struct pm8058_chip	*pm_chip;
 	u8			reg_kp;
 	u8			reg_led_ctrl[3];
 	u8			reg_flash_led0;
 	u8			reg_flash_led1;
+
+	pm_chip = platform_get_drvdata(pdev);
+	if (pm_chip == NULL) {
+		dev_err(&pdev->dev, "no parent data passed in\n");
+		return -EFAULT;
+	}
 
 	if (pdata == NULL) {
 		dev_err(&pdev->dev, "platform data not supplied\n");
 		return -EINVAL;
 	}
 
-	rc = pm8xxx_readb(pdev->dev.parent, SSBI_REG_ADDR_DRV_KEYPAD, &reg_kp);
+	rc = pm8058_read(pm_chip, SSBI_REG_ADDR_DRV_KEYPAD, &reg_kp,
+				1);
 	if (rc) {
 		dev_err(&pdev->dev, "can't get keypad backlight level\n");
 		goto err_reg_read;
 	}
 
-	rc = pm8xxx_read_buf(pdev->dev.parent, SSBI_REG_ADDR_LED_CTRL_BASE,
-							reg_led_ctrl, 3);
+	rc = pm8058_read(pm_chip, SSBI_REG_ADDR_LED_CTRL_BASE,
+			reg_led_ctrl, 3);
 	if (rc) {
 		dev_err(&pdev->dev, "can't get led levels\n");
 		goto err_reg_read;
 	}
 
-	rc = pm8xxx_readb(pdev->dev.parent, SSBI_REG_ADDR_FLASH_DRV0,
-						&reg_flash_led0);
+	rc = pm8058_read(pm_chip, SSBI_REG_ADDR_FLASH_DRV0,
+			&reg_flash_led0, 1);
 	if (rc) {
 		dev_err(&pdev->dev, "can't read flash led0\n");
 		goto err_reg_read;
 	}
 
-	rc = pm8xxx_readb(pdev->dev.parent, SSBI_REG_ADDR_FLASH_DRV1,
-						&reg_flash_led1);
+	rc = pm8058_read(pm_chip, SSBI_REG_ADDR_FLASH_DRV1,
+			&reg_flash_led1, 1);
 	if (rc) {
 		dev_err(&pdev->dev, "can't get flash led1\n");
 		goto err_reg_read;
@@ -358,7 +326,7 @@ static int pmic8058_led_probe(struct platform_device *pdev)
 			goto fail_id_check;
 		}
 
-		led_dat->dev			= &pdev->dev;
+		led_dat->pm_chip		= pm_chip;
 
 		mutex_init(&led_dat->lock);
 		spin_lock_init(&led_dat->value_lock);

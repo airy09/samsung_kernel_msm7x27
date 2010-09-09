@@ -1,6 +1,6 @@
 /* linux/arch/arm/mach-msm/rpc_hsusb.c
  *
- * Copyright (c) 2008-2011, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2008-2009, Code Aurora Forum. All rights reserved.
  *
  * All source code in this file is licensed under the following license except
  * where indicated.
@@ -19,7 +19,6 @@
  */
 
 #include <linux/err.h>
-#include <linux/slab.h>
 #include <mach/rpc_hsusb.h>
 #include <asm/mach-types.h>
 
@@ -82,7 +81,7 @@ static int msm_hsusb_init_rpc_ids(unsigned long vers)
 		usb_rpc_ids.disable_pmic_ulpi_data0	= 19;
 		return 0;
 	} else {
-		pr_err("%s: no matches found for version\n",
+		pr_info("%s: no matches found for version\n",
 			__func__);
 		return -ENODATA;
 	}
@@ -91,9 +90,7 @@ static int msm_hsusb_init_rpc_ids(unsigned long vers)
 static int msm_chg_init_rpc(unsigned long vers)
 {
 	if (((vers & RPC_VERSION_MAJOR_MASK) == 0x00010000) ||
-	    ((vers & RPC_VERSION_MAJOR_MASK) == 0x00020000) ||
-	    ((vers & RPC_VERSION_MAJOR_MASK) == 0x00030000) ||
-	    ((vers & RPC_VERSION_MAJOR_MASK) == 0x00040000)) {
+	    ((vers & RPC_VERSION_MAJOR_MASK) == 0x00020000)) {
 		chg_ep = msm_rpc_connect_compatible(MSM_RPC_CHG_PROG, vers,
 						     MSM_RPC_UNINTERRUPTIBLE);
 		if (IS_ERR(chg_ep))
@@ -113,7 +110,7 @@ int msm_hsusb_rpc_connect(void)
 {
 
 	if (usb_ep && !IS_ERR(usb_ep)) {
-		pr_debug("%s: usb_ep already connected\n", __func__);
+		pr_info("%s: usb_ep already connected\n", __func__);
 		return 0;
 	}
 
@@ -160,21 +157,15 @@ int msm_chg_rpc_connect(void)
 {
 	uint32_t chg_vers;
 
-	if (machine_is_msm7x27_surf() || machine_is_qsd8x50_surf())
+	if (machine_is_msm7201a_surf() || machine_is_msm7x27_surf() ||
+	    machine_is_qsd8x50_surf() || machine_is_msm7x25_surf() ||
+	    machine_is_qsd8x50a_surf())
 		return -ENOTSUPP;
 
 	if (chg_ep && !IS_ERR(chg_ep)) {
 		pr_debug("%s: chg_ep already connected\n", __func__);
 		return 0;
 	}
-
-	chg_vers = 0x00040001;
-	if (!msm_chg_init_rpc(chg_vers))
-		goto chg_found;
-
-	chg_vers = 0x00030001;
-	if (!msm_chg_init_rpc(chg_vers))
-		goto chg_found;
 
 	chg_vers = 0x00020001;
 	if (!msm_chg_init_rpc(chg_vers))
@@ -304,14 +295,14 @@ int msm_hsusb_send_productID(uint32_t product_id)
 }
 EXPORT_SYMBOL(msm_hsusb_send_productID);
 
-int msm_hsusb_send_serial_number(const char *serial_number)
+int msm_hsusb_send_serial_number(char *serial_number)
 {
-	int rc = 0, serial_len, rlen;
-	struct hsusb_send_sn_req {
+	int rc = 0, serial_len;
+	struct hsusb_phy_start_req {
 		struct rpc_request_hdr hdr;
 		uint32_t length;
-		char sn[0];
-	} *req;
+		char serial_num[20];
+	} req;
 
 	if (!usb_ep || IS_ERR(usb_ep)) {
 		pr_err("%s: rpc connect failed: rc = %ld\n",
@@ -319,29 +310,18 @@ int msm_hsusb_send_serial_number(const char *serial_number)
 		return -EAGAIN;
 	}
 
-	/*
-	 * USB driver passes null terminated string to us. Modem processor
-	 * expects serial number to be 32 bit aligned.
-	 */
 	serial_len  = strlen(serial_number)+1;
-	rlen = sizeof(struct rpc_request_hdr) + sizeof(uint32_t) +
-			((serial_len + 3) & ~3);
-
-	req = kmalloc(rlen, GFP_KERNEL);
-	if (!req)
-		return -ENOMEM;
-
-	req->length = cpu_to_be32(serial_len);
-	strncpy(req->sn , serial_number, serial_len);
+	strncpy(req.serial_num, serial_number, 20);
+	req.length = cpu_to_be32(serial_len);
 	rc = msm_rpc_call(usb_ep, usb_rpc_ids.update_serial_num,
-				req, rlen, 5 * HZ);
+				&req, sizeof(req),
+				5 * HZ);
 	if (rc < 0)
 		pr_err("%s: rpc call failed! error: %d\n",
 			__func__, rc);
 	else
 		pr_debug("%s: rpc call success\n", __func__);
 
-	kfree(req);
 	return rc;
 }
 EXPORT_SYMBOL(msm_hsusb_send_serial_number);
@@ -593,33 +573,6 @@ int msm_hsusb_disable_pmic_ulpidata0(void)
 	return msm_hsusb_pmic_ulpidata0_config(0);
 }
 EXPORT_SYMBOL(msm_hsusb_disable_pmic_ulpidata0);
-
-
-/* wrapper for sending pid and serial# info to bootloader */
-int usb_diag_update_pid_and_serial_num(uint32_t pid, const char *snum)
-{
-	int ret;
-
-	ret = msm_hsusb_send_productID(pid);
-	if (ret)
-		return ret;
-
-	if (!snum) {
-		ret = msm_hsusb_is_serial_num_null(1);
-		if (ret)
-			return ret;
-	}
-
-	ret = msm_hsusb_is_serial_num_null(0);
-	if (ret)
-		return ret;
-	ret = msm_hsusb_send_serial_number(snum);
-	if (ret)
-		return ret;
-
-	return 0;
-}
-
 
 #ifdef CONFIG_USB_GADGET_MSM_72K
 /* charger api wrappers */

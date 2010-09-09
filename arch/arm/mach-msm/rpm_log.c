@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -8,6 +8,11 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  *
  */
 #include <linux/debugfs.h>
@@ -60,8 +65,7 @@ static inline u32
 msm_rpm_log_read(const struct msm_rpm_log_platform_data *pdata, u32 page,
 		 u32 reg)
 {
-	return readl_relaxed(pdata->reg_base + pdata->reg_offsets[page]
-				+ reg * 4);
+	return readl(pdata->reg_base + pdata->reg_offsets[page] + reg * 4);
 }
 
 /*
@@ -186,12 +190,11 @@ static ssize_t msm_rpm_log_file_read(struct file *file, char __user *bufu,
 	struct msm_rpm_log_buffer *buf;
 
 	buf = file->private_data;
-	if (!buf)
-		return -ENOMEM;
-
 	pdata = buf->pdata;
 	if (!pdata)
 		return -EINVAL;
+	if (!buf)
+		return -ENOMEM;
 	if (!buf->data)
 		return -ENOMEM;
 	if (!bufu || count < 0)

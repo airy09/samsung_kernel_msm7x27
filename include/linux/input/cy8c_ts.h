@@ -57,9 +57,7 @@ struct cy8c_ts_platform_data {
 	u16 invert_x;
 	u16 invert_y;
 	u8 nfingers;
-	u32 irq_gpio;
-	int resout_gpio;
-	bool wakeup;
+	u8 use_polling;
 };
 
 #endif

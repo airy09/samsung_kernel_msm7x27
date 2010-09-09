@@ -1,11 +1,10 @@
-/* Copyright (c) 2010-2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
  *
  * sbc/pcm audio input driver
  * Based on the pcm input driver in arch/arm/mach-msm/qdsp5v2/audio_pcm_in.c
  *
  * Copyright (C) 2008 HTC Corporation
  * Copyright (C) 2008 Google, Inc.
- * Copyright (c) 2012 The Linux Foundation. All rights reserved.
  *
  * All source code in this file is licensed under the following license except
  * where indicated.
@@ -24,8 +23,6 @@
  * GNU General Public License for more details.
  *
  */
-#include <asm/atomic.h>
-#include <asm/ioctls.h>
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/miscdevice.h>
@@ -35,15 +32,10 @@
 #include <linux/dma-mapping.h>
 #include <linux/msm_audio.h>
 #include <linux/msm_audio_sbc.h>
-#include <linux/ion.h>
-#include <linux/memory_alloc.h>
+#include <asm/atomic.h>
+#include <asm/ioctls.h>
 
-#include <mach/iommu.h>
-#include <mach/iommu_domains.h>
 #include <mach/msm_adsp.h>
-#include <mach/msm_memtypes.h>
-#include <mach/msm_subsystem_map.h>
-#include <mach/socinfo.h>
 #include <mach/qdsp5v2/qdsp5audreccmdi.h>
 #include <mach/qdsp5v2/qdsp5audrecmsg.h>
 #include <mach/qdsp5v2/audpreproc.h>
@@ -82,8 +74,6 @@ struct audio_a2dp_in {
 
 	struct msm_adsp_module *audrec;
 
-	struct audrec_session_info session_info; /*audrec session info*/
-
 	/* configuration to use on next enable */
 	uint32_t samp_rate;
 	uint32_t channel_mode;
@@ -109,16 +99,12 @@ struct audio_a2dp_in {
 	/* data allocated for various buffers */
 	char *data;
 	dma_addr_t phys;
-	struct msm_mapped_buffer *msm_map;
 
 	int opened;
 	int enabled;
 	int running;
 	int stopped; /* set when stopped, cleared on flush */
 	int abort; /* set when error, like sample rate mismatch */
-	char *build_id;
-	struct ion_client *client;
-	struct ion_handle *output_buff_handle;
 };
 
 static struct audio_a2dp_in the_audio_a2dp_in;
@@ -317,10 +303,6 @@ static void audrec_dsp_event(void *data, unsigned id, size_t len,
 		auda2dp_in_get_dsp_frames(audio);
 		break;
 	}
-	case ADSP_MESSAGE_ID: {
-		MM_DBG("Received ADSP event: module audrectask\n");
-		break;
-	}
 	default:
 		MM_ERR("Unknown Event id %d\n", id);
 	}
@@ -373,11 +355,7 @@ static int auda2dp_in_enc_config(struct audio_a2dp_in *audio, int enable)
 	struct audpreproc_audrec_cmd_enc_cfg cmd;
 
 	memset(&cmd, 0, sizeof(cmd));
-	if (audio->build_id[17] == '1') {
-		cmd.cmd_id = AUDPREPROC_AUDREC_CMD_ENC_CFG_2;
-	} else {
-		cmd.cmd_id = AUDPREPROC_AUDREC_CMD_ENC_CFG;
-	}
+	cmd.cmd_id = AUDPREPROC_AUDREC_CMD_ENC_CFG;
 	cmd.stream_id = audio->enc_id;
 
 	if (enable)
@@ -593,10 +571,6 @@ static long auda2dp_in_ioctl(struct file *file,
 			MM_DBG("msm_snddev_withdraw_freq\n");
 			break;
 		}
-		/*update aurec session info in audpreproc layer*/
-		audio->session_info.session_id = audio->enc_id;
-		audio->session_info.sampling_freq = audio->samp_rate;
-		audpreproc_update_audrec_info(&audio->session_info);
 		rc = auda2dp_in_enable(audio);
 		if (!rc) {
 			rc =
@@ -612,13 +586,9 @@ static long auda2dp_in_ioctl(struct file *file,
 			} else
 				rc = 0;
 		}
-		audio->stopped = 0;
 		break;
 	}
 	case AUDIO_STOP: {
-		/*reset the sampling frequency information at audpreproc layer*/
-		audio->session_info.sampling_freq = 0;
-		audpreproc_update_audrec_info(&audio->session_info);
 		rc = auda2dp_in_disable(audio);
 		rc = msm_snddev_withdraw_freq(audio->enc_id,
 					SNDDEV_CAP_TX, AUDDEV_CLNT_ENC);
@@ -842,21 +812,12 @@ static int auda2dp_in_release(struct inode *inode, struct file *file)
 	msm_snddev_withdraw_freq(audio->enc_id, SNDDEV_CAP_TX,
 					AUDDEV_CLNT_ENC);
 	auddev_unregister_evt_listner(AUDDEV_CLNT_ENC, audio->enc_id);
-	/*reset the sampling frequency information at audpreproc layer*/
-	audio->session_info.sampling_freq = 0;
-	audpreproc_update_audrec_info(&audio->session_info);
 	auda2dp_in_disable(audio);
 	auda2dp_in_flush(audio);
 	msm_adsp_put(audio->audrec);
 	audpreproc_aenc_free(audio->enc_id);
 	audio->audrec = NULL;
 	audio->opened = 0;
-	if (audio->data) {
-		ion_unmap_kernel(audio->client, audio->output_buff_handle);
-		ion_free(audio->client, audio->output_buff_handle);
-		audio->data = NULL;
-	}
-	ion_client_destroy(audio->client);
 	mutex_unlock(&audio->lock);
 	return 0;
 }
@@ -866,71 +827,12 @@ static int auda2dp_in_open(struct inode *inode, struct file *file)
 	struct audio_a2dp_in *audio = &the_audio_a2dp_in;
 	int rc;
 	int encid;
-	int len = 0;
-	unsigned long ionflag = 0;
-	ion_phys_addr_t addr = 0;
-	struct ion_handle *handle = NULL;
-	struct ion_client *client = NULL;
 
 	mutex_lock(&audio->lock);
 	if (audio->opened) {
 		rc = -EBUSY;
 		goto done;
 	}
-
-	client = msm_ion_client_create(UINT_MAX, "Audio_a2dp_in_client");
-	if (IS_ERR_OR_NULL(client)) {
-		MM_ERR("Unable to create ION client\n");
-		rc = -ENOMEM;
-		goto client_create_error;
-	}
-	audio->client = client;
-
-	MM_DBG("allocating mem sz = %d\n", DMASZ);
-	handle = ion_alloc(client, DMASZ, SZ_4K,
-		ION_HEAP(ION_AUDIO_HEAP_ID));
-	if (IS_ERR_OR_NULL(handle)) {
-		MM_ERR("Unable to create allocate O/P buffers\n");
-		rc = -ENOMEM;
-		goto output_buff_alloc_error;
-	}
-
-	audio->output_buff_handle = handle;
-
-	rc = ion_phys(client , handle, &addr, &len);
-	if (rc) {
-		MM_ERR("O/P buffers:Invalid phy: %x sz: %x\n",
-			(unsigned int) addr, (unsigned int) len);
-		rc = -ENOMEM;
-		goto output_buff_get_phys_error;
-	} else {
-		MM_INFO("O/P buffers:valid phy: %x sz: %x\n",
-			(unsigned int) addr, (unsigned int) len);
-	}
-	audio->phys = (int32_t)addr;
-
-	rc = ion_handle_get_flags(client, handle, &ionflag);
-	if (rc) {
-		MM_ERR("could not get flags for the handle\n");
-		rc = -ENOMEM;
-		goto output_buff_get_flags_error;
-	}
-
-	audio->msm_map = ion_map_kernel(client, handle, ionflag);
-	if (IS_ERR(audio->data)) {
-		MM_ERR("could not map read buffers,freeing instance 0x%08x\n",
-				(int)audio);
-		rc = -ENOMEM;
-		goto output_buff_map_error;
-	}
-	MM_DBG("read buf: phy addr 0x%08x kernel addr 0x%08x\n",
-		audio->phys, (int)audio->data);
-
-	audio->data = (char *)audio->msm_map;
-
-	MM_DBG("Memory addr = 0x%8x  phy addr = 0x%8x\n",\
-		(int) audio->data, (int) audio->phys);
-
 	if ((file->f_mode & FMODE_WRITE) &&
 				(file->f_mode & FMODE_READ)) {
 		rc = -EACCES;
@@ -988,8 +890,6 @@ static int auda2dp_in_open(struct inode *inode, struct file *file)
 		MM_ERR("failed to register device event listener\n");
 		goto evt_error;
 	}
-	audio->build_id = socinfo_get_build_id();
-	MM_DBG("Modem build id = %s\n", audio->build_id);
 	file->private_data = audio;
 	audio->opened = 1;
 	rc = 0;
@@ -997,13 +897,6 @@ done:
 	mutex_unlock(&audio->lock);
 	return rc;
 evt_error:
-output_buff_map_error:
-output_buff_get_phys_error:
-output_buff_get_flags_error:
-	ion_free(client, audio->output_buff_handle);
-output_buff_alloc_error:
-	ion_client_destroy(client);
-client_create_error:
 	msm_adsp_put(audio->audrec);
 	audpreproc_aenc_free(audio->enc_id);
 	mutex_unlock(&audio->lock);
@@ -1027,6 +920,15 @@ struct miscdevice audio_a2dp_in_misc = {
 
 static int __init auda2dp_in_init(void)
 {
+	the_audio_a2dp_in.data = dma_alloc_coherent(NULL, DMASZ,
+				       &the_audio_a2dp_in.phys, GFP_KERNEL);
+	MM_DBG("Memory addr = 0x%8x  phy addr = 0x%8x ---- \n", \
+		(int) the_audio_a2dp_in.data, (int) the_audio_a2dp_in.phys);
+
+	if (!the_audio_a2dp_in.data) {
+		MM_ERR("Unable to allocate DMA buffer\n");
+		return -ENOMEM;
+	}
 	mutex_init(&the_audio_a2dp_in.lock);
 	mutex_init(&the_audio_a2dp_in.read_lock);
 	spin_lock_init(&the_audio_a2dp_in.dsp_lock);

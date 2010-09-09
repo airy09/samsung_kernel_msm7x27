@@ -92,7 +92,7 @@ struct msm_i2c_dev {
 	int                          clk_state;
 	void                         *complete;
 
-	struct pm_qos_request_list pm_qos_req;
+	struct pm_qos_request_list *pm_qos_req;
 };
 
 static void
@@ -386,13 +386,13 @@ msm_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 	}
 
 	/* Don't allow power collapse until we release remote spinlock */
-	pm_qos_update_request(&dev->pm_qos_req,  dev->pdata->pm_lat);
+	pm_qos_update_request(dev->pm_qos_req,  dev->pdata->pm_lat);
 	if (dev->pdata->rmutex) {
 		remote_mutex_lock(&dev->r_lock);
 		/* If other processor did some transactions, we may have
 		 * interrupt pending. Clear it
 		 */
-		irq_get_chip(dev->irq)->irq_ack(irq_get_irq_data(dev->irq));
+		get_irq_chip(dev->irq)->ack(dev->irq);
 	}
 
 	if (adap == &dev->adap_pri)
@@ -539,7 +539,7 @@ wait_for_int:
 	disable_irq(dev->irq);
 	if (dev->pdata->rmutex)
 		remote_mutex_unlock(&dev->r_lock);
-	pm_qos_update_request(&dev->pm_qos_req,
+	pm_qos_update_request(dev->pm_qos_req,
 			      PM_QOS_DEFAULT_VALUE);
 	mod_timer(&dev->pwr_timer, (jiffies + 3*HZ));
 	mutex_unlock(&dev->mlock);
@@ -590,7 +590,7 @@ msm_i2c_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "I2C region already claimed\n");
 		return -EBUSY;
 	}
-	clk = clk_get(&pdev->dev, "core_clk");
+	clk = clk_get(&pdev->dev, "i2c_clk");
 	if (IS_ERR(clk)) {
 		dev_err(&pdev->dev, "Could not get clock\n");
 		ret = PTR_ERR(clk);
@@ -687,8 +687,13 @@ msm_i2c_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "request_irq failed\n");
 		goto err_request_irq_failed;
 	}
-	pm_qos_add_request(&dev->pm_qos_req, PM_QOS_CPU_DMA_LATENCY,
+	dev->pm_qos_req = pm_qos_add_request(PM_QOS_CPU_DMA_LATENCY,
 					     PM_QOS_DEFAULT_VALUE);
+	if (!dev->pm_qos_req) {
+		dev_err(&pdev->dev, "pm_qos_add_request failed\n");
+		goto err_pm_qos_add_request_failed;
+	}
+
 	disable_irq(dev->irq);
 	dev->suspended = 0;
 	mutex_init(&dev->mlock);
@@ -701,6 +706,8 @@ msm_i2c_probe(struct platform_device *pdev)
 
 	return 0;
 
+err_pm_qos_add_request_failed:
+	free_irq(dev->irq, dev); 
 err_request_irq_failed:
 	i2c_del_adapter(&dev->adap_pri);
 	i2c_del_adapter(&dev->adap_aux);
@@ -731,7 +738,7 @@ msm_i2c_remove(struct platform_device *pdev)
 	if (dev->clk_state != 0)
 		msm_i2c_pwr_mgmt(dev, 0);
 	platform_set_drvdata(pdev, NULL);
-	pm_qos_remove_request(&dev->pm_qos_req);
+	pm_qos_remove_request(dev->pm_qos_req);
 	free_irq(dev->irq, dev);
 	i2c_del_adapter(&dev->adap_pri);
 	i2c_del_adapter(&dev->adap_aux);
@@ -739,8 +746,7 @@ msm_i2c_remove(struct platform_device *pdev)
 	iounmap(dev->base);
 	kfree(dev);
 	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (mem)
-		release_mem_region(mem->start, (mem->end - mem->start) + 1);
+	release_mem_region(mem->start, (mem->end - mem->start) + 1);
 	return 0;
 }
 

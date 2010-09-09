@@ -8,6 +8,11 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  */
 
 #include <linux/init.h>
@@ -17,11 +22,8 @@
 #include <mach/msm_qdsp6_audio.h>
 #include <asm/string.h>
 #include <asm/mach-types.h>
-#include <mach/debug_mm.h>
 
 #define GPIO_HEADSET_AMP 157
-#define GPIO_SPEAKER_AMP 39
-#define GPIO_HEADSET_SHDN_N 48
 
 void analog_init(void)
 {
@@ -29,13 +31,13 @@ void analog_init(void)
 	pmic_spkr_set_gain(LEFT_SPKR, SPKR_GAIN_PLUS12DB);
 	pmic_spkr_set_gain(RIGHT_SPKR, SPKR_GAIN_PLUS12DB);
 	pmic_mic_set_volt(MIC_VOLT_1_80V);
+
 	gpio_direction_output(GPIO_HEADSET_AMP, 1);
 	gpio_set_value(GPIO_HEADSET_AMP, 0);
 }
 
 void analog_headset_enable(int en)
 {
-	pr_debug("[%s:%s] en = %d\n", __MM_FILE__, __func__, en);
 	/* enable audio amp */
 	gpio_set_value(GPIO_HEADSET_AMP, !!en);
 }
@@ -45,7 +47,6 @@ void analog_speaker_enable(int en)
 	struct spkr_config_mode scm;
 	memset(&scm, 0, sizeof(scm));
 
-	pr_debug("[%s:%s] en = %d\n", __MM_FILE__, __func__, en);
 	if (en) {
 		scm.is_right_chan_en = 1;
 		scm.is_left_chan_en = 1;
@@ -56,6 +57,14 @@ void analog_speaker_enable(int en)
 		pmic_set_spkr_configuration(&scm);
 		pmic_spkr_en(LEFT_SPKR, 1);
 		pmic_spkr_en(RIGHT_SPKR, 1);
+
+		/* Enable Speaker Amplifier */
+		if (machine_is_qsd8x50a_st1_5()) {
+			gpio_set_value(48, (en != 0));
+			pmic_secure_mpp_control_digital_output(
+					PM_MPP_21, PM_MPP__DLOGIC__LVL_VDD,
+					PM_MPP__DLOGIC_OUT__CTRL_HIGH);
+		}
 		
 		/* unmute */
 		pmic_spkr_en_mute(LEFT_SPKR, 1);
@@ -63,6 +72,14 @@ void analog_speaker_enable(int en)
 	} else {
 		pmic_spkr_en_mute(LEFT_SPKR, 0);
 		pmic_spkr_en_mute(RIGHT_SPKR, 0);
+
+		/* Disable Speaker Amplifier */
+		if (machine_is_qsd8x50a_st1_5()) {
+			gpio_set_value(48, (en != 0));
+			pmic_secure_mpp_control_digital_output(
+					PM_MPP_21, PM_MPP__DLOGIC__LVL_VDD,
+					PM_MPP__DLOGIC_OUT__CTRL_LOW);
+		}
 
 		pmic_spkr_en(LEFT_SPKR, 0);
 		pmic_spkr_en(RIGHT_SPKR, 0);
@@ -73,7 +90,6 @@ void analog_speaker_enable(int en)
 
 void analog_mic_enable(int en)
 {
-	pr_debug("[%s:%s] en = %d\n", __MM_FILE__, __func__, en);
 	pmic_mic_en(en);
 }
 

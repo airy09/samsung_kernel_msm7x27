@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -9,11 +9,16 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
  */
 
 #include <linux/unistd.h>
-#include <media/msm/vidc_type.h>
 #include "vidc.h"
+#include "vidc_type.h"
 
 #if DEBUG
 #define DBG(x...) printk(KERN_DEBUG x)
@@ -222,9 +227,6 @@ u32 vidc_720p_engine_reset(u32 ch_id,
 
 	/*Sets the DMA endianness */
 	VIDC_IO_OUT(REG_736316, dma_endian);
-
-	/*Restore ARM endianness */
-	VIDC_IO_OUT(REG_215724, 0);
 
 	/* retun engine reset success */
 	return true ;
@@ -546,10 +548,9 @@ void vidc_720p_decode_bitstream_header(u32 ch_id,
 					u32 ext_buffer_end,
 					enum
 					vidc_720p_memory_access_method
-					memory_access_model,
-					u32 decode_order)
+					memory_access_model)
 {
-	VIDC_IO_OUT(REG_965480, decode_order);
+	VIDC_IO_OUT(REG_965480, 0x0);
 
 	VIDC_IO_OUT(REG_639999, 0x8080);
 
@@ -762,10 +763,7 @@ void vidc_720p_decode_display_info(struct vidc_720p_dec_disp_info
 	disp_info->input_is_interlace =
 	    ((disp_info->input_frame & 0x4) >> 2);
 
-	if (disp_info->input_frame & 0x10)
-		disp_info->input_frame = VIDC_720P_IDRFRAME;
-	else
-		disp_info->input_frame &= 0x3;
+	disp_info->input_frame &= 0x3;
 }
 
 void vidc_720p_decode_skip_frm_details(u32 *free_luma_dpb)

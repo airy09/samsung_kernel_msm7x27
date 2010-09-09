@@ -1,4 +1,4 @@
-/* Copyright (c) 2008-2010, 2012 Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2008-2009, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -8,6 +8,11 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  *
  */
 
@@ -31,7 +36,7 @@ static int prism_lcd_off(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devinit prism_probe(struct platform_device *pdev)
+static int __init prism_probe(struct platform_device *pdev)
 {
 	msm_fb_add_device(pdev);
 
@@ -82,12 +87,10 @@ static int __init prism_init(void)
 		pinfo = &prism_panel_data.panel_info;
 		pinfo->xres = 800;
 		pinfo->yres = 480;
-		MSM_FB_SINGLE_MODE_PANEL(pinfo);
 		pinfo->type = MDDI_PANEL;
 		pinfo->pdest = DISPLAY_1;
 		pinfo->mddi.vdopkt = MDDI_DEFAULT_PRIM_PIX_ATTR;
 		pinfo->wait_cycle = 0;
-		pinfo->mddi.is_type1 = TRUE;
 		pinfo->bpp = 18;
 		pinfo->fb_num = 2;
 		pinfo->clk_rate = 153600000;

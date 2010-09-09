@@ -1,4 +1,4 @@
-/* Copyright (c) 2009-2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2009-2010, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -8,6 +8,11 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  *
  */
 #include <linux/module.h>
@@ -23,7 +28,6 @@
 #include <mach/qdsp5v2/mi2s.h>
 #include <mach/qdsp5v2/afe.h>
 #include <mach/qdsp5v2/lpa.h>
-#include <mach/qdsp5v2/marimba_profile.h>
 #include <mach/vreg.h>
 #include <mach/pmic.h>
 #include <linux/wakelock.h>
@@ -41,8 +45,52 @@
 	(((freq) * (SNDDEV_ICODEC_PCM_SZ)) << (SNDDEV_ICODEC_MUL_FACTOR))
 
 #ifdef CONFIG_DEBUG_FS
-static struct adie_codec_action_unit debug_rx_actions[] =
-		HANDSET_RX_8000_OSR_256;
+static struct adie_codec_action_unit debug_rx_actions[] = {
+	{ ADIE_CODEC_ACTION_STAGE_REACHED, ADIE_CODEC_DIGITAL_OFF},
+	{ ADIE_CODEC_ACTION_DELAY_WAIT, 0xbb8},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x80, 0x02, 0x02)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x80, 0x02, 0x00)},
+	{ ADIE_CODEC_ACTION_STAGE_REACHED, ADIE_CODEC_DIGITAL_READY },
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x24, 0x6F, 0x44)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x04, 0x5F, 0xBC)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x81, 0xFF, 0x4E)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x25, 0x0F, 0x0E)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x26, 0xfc, 0xfc)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x36, 0xc0, 0x80)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x3A, 0xFF, 0x2B)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x3d, 0xFF, 0xD5)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x83, 0x21, 0x21)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x33, 0x80, 0x80)},
+	{ ADIE_CODEC_ACTION_DELAY_WAIT,  0x2710},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x33, 0x40, 0x40)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x84, 0xff, 0x00)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x8A, 0x05, 0x04)},
+	{ ADIE_CODEC_ACTION_STAGE_REACHED, ADIE_CODEC_DIGITAL_ANALOG_READY},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x8a, 0x01, 0x01)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x36, 0xc0, 0x00)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x33, 0x40, 0x00)},
+	{ ADIE_CODEC_ACTION_STAGE_REACHED,  ADIE_CODEC_ANALOG_OFF},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x33, 0x80, 0x00)}
+};
 
 static struct adie_codec_action_unit debug_tx_lb_actions[] = {
 	{ ADIE_CODEC_ACTION_STAGE_REACHED, ADIE_CODEC_DIGITAL_OFF },
@@ -86,8 +134,45 @@ static struct adie_codec_action_unit debug_tx_lb_actions[] = {
 	ADIE_CODEC_PACK_ENTRY(0x11, 0xff, 0x00)}
 };
 
-static struct adie_codec_action_unit debug_tx_actions[] =
-		HANDSET_TX_8000_OSR_256;
+static struct adie_codec_action_unit debug_tx_actions[] = {
+	{ ADIE_CODEC_ACTION_STAGE_REACHED, ADIE_CODEC_DIGITAL_OFF },
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x80, 0x01, 0x01)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x80, 0x01, 0x00) },
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x8A, 0x30, 0x30)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x11, 0xfc, 0xfc)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x13, 0xfc, 0x58)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x14, 0xff, 0x65)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x15, 0xff, 0x64)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x82, 0xff, 0x5C)},
+	{ ADIE_CODEC_ACTION_STAGE_REACHED, ADIE_CODEC_DIGITAL_READY },
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x0D, 0xF0, 0xd0)},
+	{ ADIE_CODEC_ACTION_DELAY_WAIT, 0xbb8},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x83, 0x14, 0x14)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x86, 0xff, 0x00)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x8A, 0x50, 0x40)},
+	{ ADIE_CODEC_ACTION_STAGE_REACHED, ADIE_CODEC_DIGITAL_ANALOG_READY},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x8A, 0x10, 0x30)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x0D, 0xFF, 0x00)},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x83, 0x14, 0x00)},
+	{ ADIE_CODEC_ACTION_STAGE_REACHED, ADIE_CODEC_ANALOG_OFF},
+	{ ADIE_CODEC_ACTION_ENTRY,
+	ADIE_CODEC_PACK_ENTRY(0x11, 0xff, 0x00)}
+};
 
 static struct adie_codec_hwsetting_entry debug_rx_settings[] = {
 	{
@@ -98,21 +183,21 @@ static struct adie_codec_hwsetting_entry debug_rx_settings[] = {
 	}
 };
 
-static struct adie_codec_hwsetting_entry debug_tx_settings[] = {
-	{
-		.freq_plan = 8000,
-		.osr = 256,
-		.actions = debug_tx_actions,
-		.action_sz = ARRAY_SIZE(debug_tx_actions),
-	}
-};
-
 static struct adie_codec_hwsetting_entry debug_tx_lb_settings[] = {
 	{
 		.freq_plan = 8000,
 		.osr = 256,
 		.actions = debug_tx_lb_actions,
 		.action_sz = ARRAY_SIZE(debug_tx_lb_actions),
+	}
+};
+
+static struct adie_codec_hwsetting_entry debug_tx_settings[] = {
+	{
+		.freq_plan = 8000,
+		.osr = 256,
+		.actions = debug_tx_actions,
+		.action_sz = ARRAY_SIZE(debug_tx_actions),
 	}
 };
 
@@ -146,7 +231,6 @@ struct snddev_icodec_state {
 /* Global state for the driver */
 struct snddev_icodec_drv_state {
 	struct mutex rx_lock;
-	struct mutex lb_lock;
 	struct mutex tx_lock;
 	u32 rx_active; /* ensure one rx device at a time */
 	u32 tx_active; /* ensure one tx device at a time */
@@ -231,6 +315,7 @@ static int snddev_icodec_open_rx(struct snddev_icodec_state *icodec)
 	 * If OSR is to be changed, need clock API for setting the divider
 	 */
 	adie_codec_setpath(icodec->adie_path, icodec->sample_rate, 256);
+	lpa_cmd_enable_codec(drv->lpa, 1);
 	/* Start AFE */
 	afe_config.sample_rate = icodec->sample_rate / 1000;
 	afe_config.channel_mode = icodec->data->channel_mode;
@@ -238,7 +323,6 @@ static int snddev_icodec_open_rx(struct snddev_icodec_state *icodec)
 	trc = afe_enable(AFE_HW_PATH_CODEC_RX, &afe_config);
 	if (IS_ERR_VALUE(trc))
 		goto error_afe;
-	lpa_cmd_enable_codec(drv->lpa, 1);
 	/* Enable ADIE */
 	adie_codec_proceed_stage(icodec->adie_path, ADIE_CODEC_DIGITAL_READY);
 	adie_codec_proceed_stage(icodec->adie_path,
@@ -306,11 +390,8 @@ static int snddev_icodec_open_tx(struct snddev_icodec_state *icodec)
 	clk_enable(drv->tx_sclk);
 
 	/* Set MI2S */
-	mi2s_set_codec_input_path((icodec->data->channel_mode ==
-				REAL_STEREO_CHANNEL_MODE ? MI2S_CHAN_STEREO :
-				(icodec->data->channel_mode == 2 ?
-				 MI2S_CHAN_STEREO : MI2S_CHAN_MONO_RAW)),
-				WT_16_BIT);
+	mi2s_set_codec_input_path((icodec->data->channel_mode == 2 ?
+	MI2S_CHAN_STEREO : MI2S_CHAN_MONO_RAW), WT_16_BIT);
 	/* Configure ADIE */
 	trc = adie_codec_open(icodec->data->profile, &icodec->adie_path);
 	if (IS_ERR_VALUE(trc))
@@ -356,24 +437,6 @@ error_invalid_freq:
 
 	wake_unlock(&drv->tx_idlelock);
 	return -ENODEV;
-}
-
-static int snddev_icodec_close_lb(struct snddev_icodec_state *icodec)
-{
-	/* Disable power amplifier */
-	if (icodec->data->pamp_off)
-		icodec->data->pamp_off();
-
-	if (icodec->adie_path) {
-		adie_codec_proceed_stage(icodec->adie_path,
-						ADIE_CODEC_DIGITAL_OFF);
-		adie_codec_close(icodec->adie_path);
-		icodec->adie_path = NULL;
-	}
-	if (icodec->data->voltage_off)
-		icodec->data->voltage_off();
-
-	return 0;
 }
 
 static int snddev_icodec_close_rx(struct snddev_icodec_state *icodec)
@@ -464,26 +527,6 @@ static int snddev_icodec_close_tx(struct snddev_icodec_state *icodec)
 	return 0;
 }
 
-static int snddev_icodec_open_lb(struct snddev_icodec_state *icodec)
-{
-	int trc;
-	trc = adie_codec_open(icodec->data->profile, &icodec->adie_path);
-	if (IS_ERR_VALUE(trc))
-		pr_err("%s: adie codec open failed\n", __func__);
-	else
-		adie_codec_setpath(icodec->adie_path,
-						icodec->sample_rate, 256);
-
-	if (icodec->adie_path)
-		adie_codec_proceed_stage(icodec->adie_path,
-					ADIE_CODEC_DIGITAL_ANALOG_READY);
-	if (icodec->data->pamp_on)
-		icodec->data->pamp_on();
-
-	icodec->enabled = 1;
-	return 0;
-}
-
 static int snddev_icodec_set_device_volume_impl(
 		struct msm_snddev_info *dev_info, u32 volume)
 {
@@ -502,9 +545,7 @@ static int snddev_icodec_set_device_volume_impl(
 	if (icodec->data->dev_vol_type & SNDDEV_DEV_VOL_DIGITAL) {
 
 		rc = adie_codec_set_device_digital_volume(icodec->adie_path,
-				icodec->data->channel_mode ==
-						REAL_STEREO_CHANNEL_MODE ?
-					2 : icodec->data->channel_mode, volume);
+				icodec->data->channel_mode, volume);
 		if (rc < 0) {
 			MM_ERR("unable to set_device_digital_volume for"
 				"%s volume in percentage = %u\n",
@@ -512,67 +553,19 @@ static int snddev_icodec_set_device_volume_impl(
 			return rc;
 		}
 
-	} else if (icodec->data->dev_vol_type & SNDDEV_DEV_VOL_ANALOG) {
+	} else if (icodec->data->dev_vol_type & SNDDEV_DEV_VOL_ANALOG)
 		rc = adie_codec_set_device_analog_volume(icodec->adie_path,
-				icodec->data->channel_mode ==
-						REAL_STEREO_CHANNEL_MODE ?
-					2 : icodec->data->channel_mode, volume);
+				icodec->data->channel_mode, volume);
 		if (rc < 0) {
 			MM_ERR("unable to set_device_analog_volume for"
 				"%s volume in percentage = %u\n",
 				dev_info->name, volume);
 			return rc;
 		}
-	}
 	else {
 		MM_ERR("Invalid device volume control\n");
 		return -EPERM;
 	}
-	return rc;
-}
-
-static int snddev_icodec_close(struct msm_snddev_info *dev_info)
-{
-	int rc = 0;
-	struct snddev_icodec_state *icodec;
-	struct snddev_icodec_drv_state *drv = &snddev_icodec_drv;
-	if (!dev_info) {
-		rc = -EINVAL;
-		goto error;
-	}
-
-	icodec = dev_info->private_data;
-
-	if (icodec->data->capability & SNDDEV_CAP_RX) {
-		mutex_lock(&drv->rx_lock);
-		if (!drv->rx_active) {
-			mutex_unlock(&drv->rx_lock);
-			rc = -EPERM;
-			goto error;
-		}
-		rc = snddev_icodec_close_rx(icodec);
-		if (!IS_ERR_VALUE(rc))
-			drv->rx_active = 0;
-		mutex_unlock(&drv->rx_lock);
-	} else if (icodec->data->capability & SNDDEV_CAP_LB) {
-		mutex_lock(&drv->lb_lock);
-		rc = snddev_icodec_close_lb(icodec);
-		mutex_unlock(&drv->lb_lock);
-	} else {
-		mutex_lock(&drv->tx_lock);
-		if (!drv->tx_active) {
-			mutex_unlock(&drv->tx_lock);
-			rc = -EPERM;
-			goto error;
-		}
-		rc = snddev_icodec_close_tx(icodec);
-		if (!IS_ERR_VALUE(rc))
-			drv->tx_active = 0;
-		mutex_unlock(&drv->tx_lock);
-	}
-
-error:
-	return rc;
 }
 
 static int snddev_icodec_open(struct msm_snddev_info *dev_info)
@@ -604,29 +597,8 @@ static int snddev_icodec_open(struct msm_snddev_info *dev_info)
 				SNDDEV_DEV_VOL_ANALOG)))
 				rc = snddev_icodec_set_device_volume_impl(
 						dev_info, dev_info->dev_volume);
-				if (IS_ERR_VALUE(rc)) {
-					MM_ERR("Failed to set device volume"
-						" impl for rx device\n");
-					snddev_icodec_close(dev_info);
-					mutex_unlock(&drv->rx_lock);
-					goto error;
-				}
 		}
 		mutex_unlock(&drv->rx_lock);
-	} else if (icodec->data->capability & SNDDEV_CAP_LB) {
-		mutex_lock(&drv->lb_lock);
-		rc = snddev_icodec_open_lb(icodec);
-		if (!IS_ERR_VALUE(rc)) {
-			if ((icodec->data->dev_vol_type & (
-							SNDDEV_DEV_VOL_DIGITAL |
-							SNDDEV_DEV_VOL_ANALOG)))
-				rc = snddev_icodec_set_device_volume_impl(
-							dev_info,
-							 dev_info->dev_volume);
-				if (rc < 0)
-					MM_ERR("failed to set device volume\n");
-		}
-		mutex_unlock(&drv->lb_lock);
 	} else {
 		mutex_lock(&drv->tx_lock);
 		if (drv->tx_active) {
@@ -643,16 +615,49 @@ static int snddev_icodec_open(struct msm_snddev_info *dev_info)
 				SNDDEV_DEV_VOL_ANALOG)))
 				rc = snddev_icodec_set_device_volume_impl(
 						dev_info, dev_info->dev_volume);
-				if (IS_ERR_VALUE(rc)) {
-					MM_ERR("Failed to set device volume"
-						" impl for tx device\n");
-					snddev_icodec_close(dev_info);
-					mutex_unlock(&drv->tx_lock);
-					goto error;
-				}
 		}
 		mutex_unlock(&drv->tx_lock);
 	}
+error:
+	return rc;
+}
+
+static int snddev_icodec_close(struct msm_snddev_info *dev_info)
+{
+	int rc = 0;
+	struct snddev_icodec_state *icodec;
+	struct snddev_icodec_drv_state *drv = &snddev_icodec_drv;
+	if (!dev_info) {
+		rc = -EINVAL;
+		goto error;
+	}
+
+	icodec = dev_info->private_data;
+
+	if (icodec->data->capability & SNDDEV_CAP_RX) {
+		mutex_lock(&drv->rx_lock);
+		if (!drv->rx_active) {
+			mutex_unlock(&drv->rx_lock);
+			rc = -EPERM;
+			goto error;
+		}
+		rc = snddev_icodec_close_rx(icodec);
+		if (!IS_ERR_VALUE(rc))
+			drv->rx_active = 0;
+		mutex_unlock(&drv->rx_lock);
+	} else {
+		mutex_lock(&drv->tx_lock);
+		if (!drv->tx_active) {
+			mutex_unlock(&drv->tx_lock);
+			rc = -EPERM;
+			goto error;
+		}
+		rc = snddev_icodec_close_tx(icodec);
+		if (!IS_ERR_VALUE(rc))
+			drv->tx_active = 0;
+		mutex_unlock(&drv->tx_lock);
+	}
+
 error:
 	return rc;
 }
@@ -768,8 +773,6 @@ int snddev_icodec_set_device_volume(struct msm_snddev_info *dev_info,
 
 	if (icodec->data->capability & SNDDEV_CAP_RX)
 		lock = &drv->rx_lock;
-	else if (icodec->data->capability & SNDDEV_CAP_LB)
-		lock = &drv->lb_lock;
 	else
 		lock = &drv->tx_lock;
 
@@ -832,13 +835,8 @@ static int snddev_icodec_probe(struct platform_device *pdev)
 			dev_info->min_voc_rx_vol[i] =
 				pdata->min_voice_rx_vol[i];
 		}
-		/*sidetone is enabled only for  the device which
-		property set for side tone*/
-		if (pdata->property & SIDE_TONE_MASK)
-			dev_info->dev_ops.enable_sidetone =
-				snddev_icodec_enable_sidetone;
-		else
-			dev_info->dev_ops.enable_sidetone = NULL;
+		dev_info->dev_ops.enable_sidetone =
+		snddev_icodec_enable_sidetone;
 	} else {
 		dev_info->dev_ops.enable_sidetone = NULL;
 	}
@@ -935,12 +933,8 @@ static void debugfs_afe_loopback(u32 loop)
 	int trc;
 	struct msm_afe_config afe_config;
 	struct snddev_icodec_drv_state *drv = &snddev_icodec_drv;
-	struct lpa_codec_config lpa_config;
 
 	if (loop) {
-		/* Vote for SMPS mode*/
-		pmapp_smps_mode_vote(SMPS_AUDIO_PLAYBACK_ID,
-				PMAPP_VREG_S4, PMAPP_SMPS_MODE_VOTE_PWM);
 
 		/* enable MI2S RX master block */
 		/* enable MI2S RX bit clock */
@@ -950,48 +944,29 @@ static void debugfs_afe_loopback(u32 loop)
 			MM_ERR("failed to set clk rate\n");
 		clk_enable(drv->rx_mclk);
 		clk_enable(drv->rx_sclk);
-		clk_enable(drv->lpa_p_clk);
 		clk_enable(drv->lpa_codec_clk);
 		clk_enable(drv->lpa_core_clk);
-		/* Enable LPA sub system
-		 */
-		drv->lpa = lpa_get();
-		if (!drv->lpa)
-			MM_ERR("failed to enable lpa\n");
-		lpa_config.sample_rate = 8000;
-		lpa_config.sample_width = 16;
-		lpa_config.output_interface = LPA_OUTPUT_INTF_WB_CODEC;
-		lpa_config.num_channels = 1;
-		lpa_cmd_codec_config(drv->lpa, &lpa_config);
-		/* Set audio interconnect reg to LPA */
-		audio_interct_codec(AUDIO_INTERCT_LPA);
-		mi2s_set_codec_output_path(MI2S_CHAN_MONO_PACKED, WT_16_BIT);
+		clk_enable(drv->lpa_p_clk);
+		/* Set audio interconnect reg to ADSP */
+		audio_interct_codec(AUDIO_INTERCT_ADSP);
+		/* Set MI2S */
+		mi2s_set_codec_output_path(0, WT_16_BIT);
 		MM_INFO("configure ADIE RX path\n");
 		/* Configure ADIE */
 		adie_codec_open(&debug_rx_profile, &debugfs_rx_adie);
 		adie_codec_setpath(debugfs_rx_adie, 8000, 256);
-		lpa_cmd_enable_codec(drv->lpa, 1);
-
-		/* Start AFE for RX */
-		afe_config.sample_rate = 0x8;
+		afe_config.sample_rate = 8;
 		afe_config.channel_mode = 1;
 		afe_config.volume = AFE_VOLUME_UNITY;
 		MM_INFO("enable afe\n");
 		trc = afe_enable(AFE_HW_PATH_CODEC_RX, &afe_config);
 		if (IS_ERR_VALUE(trc))
-			MM_ERR("fail to enable afe RX\n");
-		adie_codec_proceed_stage(debugfs_rx_adie,
-		ADIE_CODEC_DIGITAL_READY);
+			MM_ERR("fail to enable afe rx\n");
 		adie_codec_proceed_stage(debugfs_rx_adie,
 		ADIE_CODEC_DIGITAL_ANALOG_READY);
 
-		/* Vote for PWM mode*/
-		pmapp_smps_mode_vote(SMPS_AUDIO_RECORD_ID,
-			PMAPP_VREG_S4, PMAPP_SMPS_MODE_VOTE_PWM);
-
 		MM_INFO("Enable Handset Mic bias\n");
 		pmic_hsed_enable(PM_HSED_CONTROLLER_0, PM_HSED_ENABLE_PWM_TCXO);
-
 		/* enable MI2S TX master block */
 		/* enable MI2S TX bit clock */
 		clk_set_rate(drv->tx_mclk,
@@ -999,73 +974,40 @@ static void debugfs_afe_loopback(u32 loop)
 		clk_enable(drv->tx_mclk);
 		clk_enable(drv->tx_sclk);
 		/* Set MI2S */
-		mi2s_set_codec_input_path(MI2S_CHAN_MONO_PACKED, WT_16_BIT);
+		mi2s_set_codec_input_path(0, WT_16_BIT);
 		MM_INFO("configure ADIE TX path\n");
 		/* Configure ADIE */
 		adie_codec_open(&debug_tx_profile, &debugfs_tx_adie);
 		adie_codec_setpath(debugfs_tx_adie, 8000, 256);
 		adie_codec_proceed_stage(debugfs_tx_adie,
-		ADIE_CODEC_DIGITAL_READY);
-		adie_codec_proceed_stage(debugfs_tx_adie,
 		ADIE_CODEC_DIGITAL_ANALOG_READY);
-		/* Start AFE for TX */
+		/* Start AFE */
 		afe_config.sample_rate = 0x8;
 		afe_config.channel_mode = 1;
 		afe_config.volume = AFE_VOLUME_UNITY;
 		trc = afe_enable(AFE_HW_PATH_CODEC_TX, &afe_config);
 		if (IS_ERR_VALUE(trc))
 			MM_ERR("failed to enable AFE TX\n");
-		/* Set the volume level to non unity, to avoid
-		   loopback effect */
-		afe_device_volume_ctrl(AFE_HW_PATH_CODEC_RX, 0x0500);
-
-		/* enable afe loopback */
-		afe_loopback(1);
-		MM_INFO("AFE loopback enabled\n");
 	} else {
-		/* disable afe loopback */
-		afe_loopback(0);
-		/* Remove the vote for SMPS mode*/
-		pmapp_smps_mode_vote(SMPS_AUDIO_PLAYBACK_ID,
-			PMAPP_VREG_S4, PMAPP_SMPS_MODE_VOTE_DONTCARE);
-
 		/* Disable ADIE */
 		adie_codec_proceed_stage(debugfs_rx_adie,
 		ADIE_CODEC_DIGITAL_OFF);
 		adie_codec_close(debugfs_rx_adie);
-		/* Disable AFE for RX */
-		afe_disable(AFE_HW_PATH_CODEC_RX);
+		adie_codec_proceed_stage(debugfs_tx_adie,
+		ADIE_CODEC_DIGITAL_OFF);
+		adie_codec_close(debugfs_tx_adie);
 
-		/* Disable LPA Sub system */
-		lpa_cmd_enable_codec(drv->lpa, 0);
-		lpa_put(drv->lpa);
-
-		/* Disable LPA clocks */
-		clk_disable(drv->lpa_p_clk);
-		clk_disable(drv->lpa_codec_clk);
-		clk_disable(drv->lpa_core_clk);
+		pmic_hsed_enable(PM_HSED_CONTROLLER_0, PM_HSED_ENABLE_OFF);
 
 		/* Disable MI2S RX master block */
 		/* Disable MI2S RX bit clock */
 		clk_disable(drv->rx_sclk);
 		clk_disable(drv->rx_mclk);
 
-		pmapp_smps_mode_vote(SMPS_AUDIO_RECORD_ID,
-			PMAPP_VREG_S4, PMAPP_SMPS_MODE_VOTE_DONTCARE);
-
-		/* Disable AFE for TX */
-		afe_disable(AFE_HW_PATH_CODEC_TX);
-
-		/* Disable ADIE */
-		adie_codec_proceed_stage(debugfs_tx_adie,
-		ADIE_CODEC_DIGITAL_OFF);
-		adie_codec_close(debugfs_tx_adie);
 		/* Disable MI2S TX master block */
 		/* Disable MI2S TX bit clock */
 		clk_disable(drv->tx_sclk);
 		clk_disable(drv->tx_mclk);
-		pmic_hsed_enable(PM_HSED_CONTROLLER_0, PM_HSED_ENABLE_OFF);
-		MM_INFO("AFE loopback disabled\n");
 	}
 }
 
@@ -1141,17 +1083,16 @@ static int __init snddev_icodec_init(void)
 
 #ifdef CONFIG_DEBUG_FS
 	debugfs_sdev_dent = debugfs_create_dir("snddev_icodec", 0);
-	if (debugfs_sdev_dent) {
+	if (!IS_ERR(debugfs_sdev_dent)) {
 		debugfs_afelb = debugfs_create_file("afe_loopback",
-		S_IFREG | S_IWUGO, debugfs_sdev_dent,
+		S_IFREG | S_IRUGO, debugfs_sdev_dent,
 		(void *) "afe_loopback", &snddev_icodec_debug_fops);
 		debugfs_adielb = debugfs_create_file("adie_loopback",
-		S_IFREG | S_IWUGO, debugfs_sdev_dent,
+		S_IFREG | S_IRUGO, debugfs_sdev_dent,
 		(void *) "adie_loopback", &snddev_icodec_debug_fops);
 	}
 #endif
 	mutex_init(&icodec_drv->rx_lock);
-	mutex_init(&icodec_drv->lb_lock);
 	mutex_init(&icodec_drv->tx_lock);
 	icodec_drv->rx_active = 0;
 	icodec_drv->tx_active = 0;
@@ -1187,12 +1128,9 @@ static void __exit snddev_icodec_exit(void)
 	struct snddev_icodec_drv_state *icodec_drv = &snddev_icodec_drv;
 
 #ifdef CONFIG_DEBUG_FS
-	if (debugfs_afelb)
-		debugfs_remove(debugfs_afelb);
-	if (debugfs_adielb)
-		debugfs_remove(debugfs_adielb);
-	if (debugfs_sdev_dent)
-		debugfs_remove(debugfs_sdev_dent);
+	debugfs_remove(debugfs_afelb);
+	debugfs_remove(debugfs_adielb);
+	debugfs_remove(debugfs_sdev_dent);
 #endif
 	platform_driver_unregister(&snddev_icodec_driver);
 

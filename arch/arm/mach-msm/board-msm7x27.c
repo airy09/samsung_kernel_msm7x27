@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2008-2012, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2008-2010, Code Aurora Forum. All rights reserved.
  * Author: Brian Swetland <swetland@google.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -24,7 +24,7 @@
 #include <linux/bootmem.h>
 #include <linux/power_supply.h>
 
-#include <mach/msm_memtypes.h>
+
 #include <mach/hardware.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
@@ -50,7 +50,6 @@
 #include <mach/msm_battery.h>
 #include <mach/rpc_server_handset.h>
 #include <mach/msm_tsif.h>
-#include <mach/socinfo.h>
 
 #include <linux/mtd/nand.h>
 #include <linux/mtd/partitions.h>
@@ -58,18 +57,18 @@
 #include <linux/android_pmem.h>
 #include <mach/camera.h>
 
-#ifdef CONFIG_USB_G_ANDROID
-#include <linux/usb/android.h>
-#include <mach/usbdiag.h>
-#endif
-
-#include "board-msm7627-regulator.h"
 #include "devices.h"
+#include "socinfo.h"
 #include "clock.h"
-#include "acpuclock.h"
 #include "msm-keypad-devices.h"
 #include "pm.h"
-#include "pm-boot.h"
+#ifdef CONFIG_ARCH_MSM7X27
+#include <linux/msm_kgsl.h>
+#endif
+
+#ifdef CONFIG_USB_ANDROID
+#include <linux/usb/android_composite.h>
+#endif
 
 #ifdef CONFIG_ARCH_MSM7X25
 #define MSM_PMEM_MDP_SIZE	0xb21000
@@ -81,17 +80,17 @@
 
 #ifdef CONFIG_ARCH_MSM7X27
 #define MSM_PMEM_MDP_SIZE	0x1B76000
-#define MSM_PMEM_ADSP_SIZE	0xC8A000
+#define MSM_PMEM_ADSP_SIZE	0xB71000
 #define MSM_PMEM_AUDIO_SIZE	0x5B000
-
-#ifdef CONFIG_FB_MSM_TRIPLE_BUFFER
-#define MSM_FB_SIZE		0x233000
-#else
 #define MSM_FB_SIZE		0x177000
+#define MSM_GPU_PHYS_SIZE	SZ_2M
+#define PMEM_KERNEL_EBI1_SIZE	0x1C000
+/* Using lower 1MB of OEMSBL memory for GPU_PHYS */
+#define MSM_GPU_PHYS_START_ADDR	 0xD600000ul
 #endif
 
-#define PMEM_KERNEL_EBI1_SIZE	0x1C000
-#endif
+/* Using upper 1/2MB of Apps Bootloader memory*/
+#define MSM_PMEM_AUDIO_START_ADDR	0x80000ul
 
 static struct resource smc91x_resources[] = {
 	[0] = {
@@ -106,16 +105,134 @@ static struct resource smc91x_resources[] = {
 	},
 };
 
-static struct platform_device smc91x_device = {
-	.name		= "smc91x",
-	.id		= 0,
-	.num_resources	= ARRAY_SIZE(smc91x_resources),
-	.resource	= smc91x_resources,
+#ifdef CONFIG_USB_FUNCTION
+static struct usb_mass_storage_platform_data usb_mass_storage_pdata = {
+	.nluns          = 0x02,
+	.buf_size       = 16384,
+	.vendor         = "GOOGLE",
+	.product        = "Mass storage",
+	.release        = 0xffff,
 };
 
-#ifdef CONFIG_USB_G_ANDROID
+static struct platform_device mass_storage_device = {
+	.name           = "usb_mass_storage",
+	.id             = -1,
+	.dev            = {
+		.platform_data          = &usb_mass_storage_pdata,
+	},
+};
+#endif
+#ifdef CONFIG_USB_ANDROID
+static char *usb_functions_default[] = {
+	"diag",
+	"modem",
+	"nmea",
+	"rmnet",
+	"usb_mass_storage",
+};
+
+static char *usb_functions_default_adb[] = {
+	"diag",
+	"adb",
+	"modem",
+	"nmea",
+	"rmnet",
+	"usb_mass_storage",
+};
+
+static char *usb_functions_rndis[] = {
+	"rndis",
+};
+
+static char *usb_functions_rndis_adb[] = {
+	"rndis",
+	"adb",
+};
+
+static char *usb_functions_all[] = {
+#ifdef CONFIG_USB_ANDROID_RNDIS
+	"rndis",
+#endif
+#ifdef CONFIG_USB_ANDROID_DIAG
+	"diag",
+#endif
+	"adb",
+#ifdef CONFIG_USB_F_SERIAL
+	"modem",
+	"nmea",
+#endif
+#ifdef CONFIG_USB_ANDROID_RMNET
+	"rmnet",
+#endif
+	"usb_mass_storage",
+#ifdef CONFIG_USB_ANDROID_ACM
+	"acm",
+#endif
+};
+
+static struct android_usb_product usb_products[] = {
+	{
+		.product_id	= 0x9026,
+		.num_functions	= ARRAY_SIZE(usb_functions_default),
+		.functions	= usb_functions_default,
+	},
+	{
+		.product_id	= 0x9025,
+		.num_functions	= ARRAY_SIZE(usb_functions_default_adb),
+		.functions	= usb_functions_default_adb,
+	},
+	{
+		.product_id	= 0xf00e,
+		.num_functions	= ARRAY_SIZE(usb_functions_rndis),
+		.functions	= usb_functions_rndis,
+	},
+	{
+		.product_id	= 0x9024,
+		.num_functions	= ARRAY_SIZE(usb_functions_rndis_adb),
+		.functions	= usb_functions_rndis_adb,
+	},
+};
+
+static struct usb_mass_storage_platform_data mass_storage_pdata = {
+	.nluns		= 1,
+	.vendor		= "Qualcomm Incorporated",
+	.product        = "Mass storage",
+	.release	= 0x0100,
+};
+
+static struct platform_device usb_mass_storage_device = {
+	.name	= "usb_mass_storage",
+	.id	= -1,
+	.dev	= {
+		.platform_data = &mass_storage_pdata,
+	},
+};
+
+static struct usb_ether_platform_data rndis_pdata = {
+	/* ethaddr is filled by board_serialno_setup */
+	.vendorID	= 0x05C6,
+	.vendorDescr	= "Qualcomm Incorporated",
+};
+
+static struct platform_device rndis_device = {
+	.name	= "rndis",
+	.id	= -1,
+	.dev	= {
+		.platform_data = &rndis_pdata,
+	},
+};
+
 static struct android_usb_platform_data android_usb_pdata = {
-	.update_pid_and_serial_num = usb_diag_update_pid_and_serial_num,
+	.vendor_id	= 0x05C6,
+	.product_id	= 0x9026,
+	.version	= 0x0100,
+	.product_name		= "Qualcomm HSUSB Device",
+	.manufacturer_name	= "Qualcomm Incorporated",
+	.num_products = ARRAY_SIZE(usb_products),
+	.products = usb_products,
+	.num_functions = ARRAY_SIZE(usb_functions_all),
+	.functions = usb_functions_all,
+	.serial_number = "1234567890ABCDEF",
 };
 
 static struct platform_device android_usb_device = {
@@ -125,9 +242,117 @@ static struct platform_device android_usb_device = {
 		.platform_data = &android_usb_pdata,
 	},
 };
+
+static int __init board_serialno_setup(char *serialno)
+{
+	int i;
+	char *src = serialno;
+
+	/* create a fake MAC address from our serial number.
+	 * first byte is 0x02 to signify locally administered.
+	 */
+	rndis_pdata.ethaddr[0] = 0x02;
+	for (i = 0; *src; i++) {
+		/* XOR the USB serial across the remaining bytes */
+		rndis_pdata.ethaddr[i % (ETH_ALEN - 1) + 1] ^= *src++;
+	}
+
+	android_usb_pdata.serial_number = serialno;
+	return 1;
+}
+__setup("androidboot.serialno=", board_serialno_setup);
 #endif
 
-#ifdef CONFIG_USB_EHCI_MSM_72K
+static struct platform_device smc91x_device = {
+	.name		= "smc91x",
+	.id		= 0,
+	.num_resources	= ARRAY_SIZE(smc91x_resources),
+	.resource	= smc91x_resources,
+};
+
+#ifdef CONFIG_USB_FUNCTION
+static struct usb_function_map usb_functions_map[] = {
+	{"diag", 0},
+	{"adb", 1},
+	{"modem", 2},
+	{"nmea", 3},
+	{"mass_storage", 4},
+	{"ethernet", 5},
+	{"rmnet", 6},
+};
+
+/* dynamic composition */
+static struct usb_composition usb_func_composition[] = {
+	{
+		.product_id         = 0x9012,
+		.functions	    = 0x5, /* 0101 */
+	},
+
+	{
+		.product_id         = 0x9013,
+		.functions	    = 0x15, /* 10101 */
+	},
+
+	{
+		.product_id         = 0x9014,
+		.functions	    = 0x30, /* 110000 */
+	},
+
+	{
+		.product_id         = 0x9016,
+		.functions	    = 0xD, /* 01101 */
+	},
+
+	{
+		.product_id         = 0x9017,
+		.functions	    = 0x1D, /* 11101 */
+	},
+
+	{
+		.product_id         = 0xF000,
+		.functions	    = 0x10, /* 10000 */
+	},
+
+	{
+		.product_id         = 0xF009,
+		.functions	    = 0x20, /* 100000 */
+	},
+
+	{
+		.product_id         = 0x9018,
+		.functions	    = 0x1F, /* 011111 */
+	},
+#ifdef CONFIG_USB_FUNCTION_RMNET
+	{
+		.product_id         = 0x9021,
+		/* DIAG + RMNET */
+		.functions	    = 0x41,
+	},
+	{
+		.product_id         = 0x9022,
+		/* DIAG + ADB + RMNET */
+		.functions	    = 0x43,
+	},
+#endif
+
+};
+
+static struct msm_hsusb_platform_data msm_hsusb_pdata = {
+	.version	= 0x0100,
+	.phy_info	= (USB_PHY_INTEGRATED | USB_PHY_MODEL_65NM),
+	.vendor_id          = 0x5c6,
+	.product_name       = "Qualcomm HSUSB Device",
+	.serial_number      = "1234567890ABCDEF",
+	.manufacturer_name  = "Qualcomm Incorporated",
+	.compositions	= usb_func_composition,
+	.num_compositions = ARRAY_SIZE(usb_func_composition),
+	.function_map   = usb_functions_map,
+	.num_functions	= ARRAY_SIZE(usb_functions_map),
+	.config_gpio    = NULL,
+};
+#endif
+
+#ifdef CONFIG_USB_EHCI_MSM
 static void msm_hsusb_vbus_power(unsigned phy_info, int on)
 {
 	if (on)
@@ -160,57 +385,38 @@ static int hsusb_rpc_connect(int connect)
 #endif
 
 #ifdef CONFIG_USB_MSM_OTG_72K
+struct vreg *vreg_3p3;
 static int msm_hsusb_ldo_init(int init)
 {
-	static struct regulator *reg_hsusb;
-	int rc;
 	if (init) {
-		reg_hsusb = regulator_get(NULL, "usb");
-		if (IS_ERR(reg_hsusb)) {
-			rc = PTR_ERR(reg_hsusb);
-			pr_err("%s: could not get regulator: %d\n",
-					__func__, rc);
-			goto out;
-		}
-
-		rc = regulator_set_voltage(reg_hsusb, 3300000, 3300000);
-		if (rc < 0) {
-			pr_err("%s: could not set voltage: %d\n",
-					 __func__, rc);
-			goto usb_reg_fail;
-		}
-
-		rc = regulator_enable(reg_hsusb);
-		if (rc < 0) {
-			pr_err("%s: could not enable regulator: %d\n",
-					__func__, rc);
-			goto usb_reg_fail;
-		}
-
-		/*
-		 * PHY 3.3V analog domain(VDDA33) is powered up by
-		 * an always enabled power supply (LP5900TL-3.3).
-		 * USB VREG default source is VBUS line. Turning
-		 * on USB VREG has a side effect on the USB suspend
-		 * current. Hence USB VREG is explicitly turned
-		 * off here.
-		 */
-
-		rc = regulator_disable(reg_hsusb);
-		if (rc < 0) {
-			pr_err("%s: could not disable regulator: %d\n",
-					__func__, rc);
-			goto usb_reg_fail;
-		}
-
-		regulator_put(reg_hsusb);
-	}
+		vreg_3p3 = vreg_get(NULL, "usb");
+		if (IS_ERR(vreg_3p3))
+			return PTR_ERR(vreg_3p3);
+		vreg_set_level(vreg_3p3, 3300);
+	} else
+		vreg_put(vreg_3p3);
 
 	return 0;
-usb_reg_fail:
-	regulator_put(reg_hsusb);
-out:
-	return rc;
+}
+
+static int msm_hsusb_ldo_enable(int enable)
+{
+	static int ldo_status;
+
+	if (!vreg_3p3 || IS_ERR(vreg_3p3))
+		return -ENODEV;
+
+	if (ldo_status == enable)
+		return 0;
+
+	ldo_status = enable;
+
+	pr_info("%s: %d", __func__, enable);
+
+	if (enable)
+		return vreg_enable(vreg_3p3);
+
+	return vreg_disable(vreg_3p3);
 }
 
 static int msm_hsusb_pmic_notif_init(void (*callback)(int online), int init)
@@ -225,23 +431,17 @@ static int msm_hsusb_pmic_notif_init(void (*callback)(int online), int init)
 	}
 	return ret;
 }
-
-static int msm_otg_rpc_phy_reset(void __iomem *regs)
-{
-	return msm_hsusb_phy_reset();
-}
-
 static struct msm_otg_platform_data msm_otg_pdata = {
 	.rpc_connect	= hsusb_rpc_connect,
-	.pmic_vbus_notif_init         = msm_hsusb_pmic_notif_init,
+	.pmic_notif_init         = msm_hsusb_pmic_notif_init,
 	.chg_vbus_draw		 = hsusb_chg_vbus_draw,
 	.chg_connected		 = hsusb_chg_connected,
 	.chg_init		 = hsusb_chg_init,
-#ifdef CONFIG_USB_EHCI_MSM_72K
+#ifdef CONFIG_USB_EHCI_MSM
 	.vbus_power = msm_hsusb_vbus_power,
 #endif
 	.ldo_init		= msm_hsusb_ldo_init,
-	.pclk_required_during_lpm = 1,
+	.ldo_enable		= msm_hsusb_ldo_enable,
 };
 
 #ifdef CONFIG_USB_GADGET
@@ -357,10 +557,6 @@ static unsigned int dec_concurrency_table[] = {
 
 	/* Concurrency 6 */
 	(DEC0_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
-	0, 0, 0, 0,
-
-	/* Concurrency 7 */
-	(DEC0_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
 	(DEC1_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
 	(DEC2_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
 	(DEC3_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
@@ -402,25 +598,33 @@ static struct platform_device msm_device_adspdec = {
 	},
 };
 
+static struct android_pmem_platform_data android_pmem_kernel_ebi1_pdata = {
+	.name = PMEM_KERNEL_EBI1_DATA_NAME,
+	/* if no allocator_type, defaults to PMEM_ALLOCATORTYPE_BITMAP,
+	 * the only valid choice at this time. The board structure is
+	 * set to all zeros by the C runtime initialization and that is now
+	 * the enum value of PMEM_ALLOCATORTYPE_BITMAP, now forced to 0 in
+	 * include/linux/android_pmem.h.
+	 */
+	.cached = 0,
+};
+
 static struct android_pmem_platform_data android_pmem_pdata = {
 	.name = "pmem",
 	.allocator_type = PMEM_ALLOCATORTYPE_BITMAP,
 	.cached = 1,
-	.memory_type = MEMTYPE_EBI1,
 };
 
 static struct android_pmem_platform_data android_pmem_adsp_pdata = {
 	.name = "pmem_adsp",
 	.allocator_type = PMEM_ALLOCATORTYPE_BITMAP,
 	.cached = 0,
-	.memory_type = MEMTYPE_EBI1,
 };
 
 static struct android_pmem_platform_data android_pmem_audio_pdata = {
 	.name = "pmem_audio",
 	.allocator_type = PMEM_ALLOCATORTYPE_BITMAP,
 	.cached = 0,
-	.memory_type = MEMTYPE_EBI1,
 };
 
 static struct platform_device android_pmem_device = {
@@ -439,6 +643,12 @@ static struct platform_device android_pmem_audio_device = {
 	.name = "android_pmem",
 	.id = 2,
 	.dev = { .platform_data = &android_pmem_audio_pdata },
+};
+
+static struct platform_device android_pmem_kernel_ebi1_device = {
+	.name = "android_pmem",
+	.id = 4,
+	.dev = { .platform_data = &android_pmem_kernel_ebi1_pdata },
 };
 
 static struct msm_handset_platform_data hs_platform_data = {
@@ -472,9 +682,9 @@ static const struct msm_gpio tsif_gpios[] = {
 static struct msm_tsif_platform_data tsif_platform_data = {
 	.num_gpios = ARRAY_SIZE(tsif_gpios),
 	.gpios = tsif_gpios,
-	.tsif_clk = "core_clk",
-	.tsif_pclk = "iface_clk",
-	.tsif_ref_clk = "ref_clk",
+	.tsif_clk = "tsif_clk",
+	.tsif_pclk = "tsif_pclk",
+	.tsif_ref_clk = "tsif_ref_clk",
 };
 #endif /* defined(CONFIG_TSIF) || defined(CONFIG_TSIF_MODULE) */
 /* TSIF end   */
@@ -577,56 +787,38 @@ static char *msm_fb_lcdc_vreg[] = {
 
 static int msm_fb_lcdc_power_save(int on)
 {
+	struct vreg *vreg[ARRAY_SIZE(msm_fb_lcdc_vreg)];
 	int i, rc = 0;
-	static struct regulator *vreg[ARRAY_SIZE(msm_fb_lcdc_vreg)];
-
-	if (on) {
-		for (i = 0; i < ARRAY_SIZE(msm_fb_lcdc_vreg); i++) {
-			vreg[i] = regulator_get(NULL, msm_fb_lcdc_vreg[i]);
-			if (IS_ERR(vreg[i])) {
-				rc = PTR_ERR(vreg[i]);
-				pr_err("%s: could get not regulator: %d\n",
-						__func__, rc);
-				goto reg_get_fail;
-			}
-
-			rc = regulator_set_voltage(vreg[i], 2850000, 3000000);
-			if (rc < 0) {
-				pr_err("%s: could not set voltage: %d\n",
-						__func__, rc);
-				goto reg_get_fail;
-			}
-		}
-	}
 
 	for (i = 0; i < ARRAY_SIZE(msm_fb_lcdc_vreg); i++) {
 		if (on) {
-			rc = regulator_enable(vreg[i]);
+			vreg[i] = vreg_get(0, msm_fb_lcdc_vreg[i]);
+			rc = vreg_enable(vreg[i]);
 			if (rc) {
-				pr_err("%s: could not enable regulator %s:"
-					"%d\n", __func__,
-						msm_fb_lcdc_vreg[i], rc);
-				goto vreg_lcdc_fail;
+				printk(KERN_ERR "vreg_enable: %s vreg"
+						"operation failed \n",
+						msm_fb_lcdc_vreg[i]);
+				goto bail;
 			}
 		} else {
-			rc = regulator_disable(vreg[i]);
-			if (rc) {
-				pr_err("%s: could not disable regulator %s:"
-					"%d\n", __func__,
-					 msm_fb_lcdc_vreg[i], rc);
-
-				regulator_put(vreg[i]);
-				goto vreg_lcdc_fail;
-
+			int tmp;
+			vreg[i] = vreg_get(0, msm_fb_lcdc_vreg[i]);
+			tmp = vreg_disable(vreg[i]);
+			if (tmp) {
+				printk(KERN_ERR "vreg_disable: %s vreg "
+						"operation failed \n",
+						msm_fb_lcdc_vreg[i]);
+				if (!rc)
+					rc = tmp;
 			}
-
-			regulator_put(vreg[i]);
-			rc = gpio_tlmm_config(GPIO_CFG(GPIO_OUT_88, 0,
+			tmp = gpio_tlmm_config(GPIO_CFG(GPIO_OUT_88, 0,
 						GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL,
 						GPIO_CFG_2MA), GPIO_CFG_ENABLE);
-			if (rc)
+			if (tmp) {
 				printk(KERN_ERR "gpio_tlmm_config failed\n");
-
+				if (!rc)
+					rc = tmp;
+			}
 			gpio_set_value(88, 0);
 			mdelay(15);
 			gpio_set_value(88, 1);
@@ -636,23 +828,14 @@ static int msm_fb_lcdc_power_save(int on)
 
 	return rc;
 
-reg_get_fail:
-	for (; i > 0; i--)
-		regulator_put(vreg[i - 1]);
-	return rc;
-
-vreg_lcdc_fail:
+bail:
 	if (on) {
 		for (; i > 0; i--)
-			regulator_disable(vreg[i - 1]);
-	} else {
-		for (; i > 0; i--)
-			regulator_enable(vreg[i - 1]);
+			vreg_disable(vreg[i - 1]);
 	}
 
 	return rc;
 }
-
 static struct lcdc_platform_data lcdc_pdata = {
 	.lcdc_gpio_config = msm_fb_lcdc_config,
 	.lcdc_power_save   = msm_fb_lcdc_power_save,
@@ -751,13 +934,20 @@ static unsigned bt_config_power_off[] = {
 
 static int bluetooth_power(int on)
 {
+	struct vreg *vreg_bt;
 	int pin, rc;
-	static struct regulator *vreg_bt;
 
 	printk(KERN_DEBUG "%s\n", __func__);
 
 	/* do not have vreg bt defined, gp6 is the same */
 	/* vreg_get parameter 1 (struct device *) is ignored */
+	vreg_bt = vreg_get(NULL, "gp6");
+
+	if (IS_ERR(vreg_bt)) {
+		printk(KERN_ERR "%s: vreg get failed (%ld)\n",
+		       __func__, PTR_ERR(vreg_bt));
+		return PTR_ERR(vreg_bt);
+	}
 
 	if (on) {
 		for (pin = 0; pin < ARRAY_SIZE(bt_config_power_on); pin++) {
@@ -770,35 +960,27 @@ static int bluetooth_power(int on)
 				return -EIO;
 			}
 		}
-		vreg_bt = regulator_get(NULL, "gp6");
-
-		if (IS_ERR(vreg_bt)) {
-			rc = PTR_ERR(vreg_bt);
-			pr_err("%s: could get not regulator: %d\n",
-					__func__, rc);
-			goto out;
-		}
 
 		/* units of mV, steps of 50 mV */
-		rc = regulator_set_voltage(vreg_bt, 2600000, 2600000);
-		if (rc < 0) {
-			pr_err("%s: could not set voltage: %d\n", __func__, rc);
-			goto bt_vreg_fail;
+		rc = vreg_set_level(vreg_bt, 2600);
+		if (rc) {
+			printk(KERN_ERR "%s: vreg set level failed (%d)\n",
+			       __func__, rc);
+			return -EIO;
 		}
-		rc = regulator_enable(vreg_bt);
-		if (rc < 0) {
-			pr_err("%s: could not enable regulator: %d\n",
-					 __func__, rc);
-			goto bt_vreg_fail;
+		rc = vreg_enable(vreg_bt);
+		if (rc) {
+			printk(KERN_ERR "%s: vreg enable failed (%d)\n",
+			       __func__, rc);
+			return -EIO;
 		}
 	} else {
-		rc = regulator_disable(vreg_bt);
-		if (rc < 0) {
-			pr_err("%s: could not disable regulator: %d\n",
-					 __func__, rc);
-			goto bt_vreg_fail;
+		rc = vreg_disable(vreg_bt);
+		if (rc) {
+			printk(KERN_ERR "%s: vreg disable failed (%d)\n",
+			       __func__, rc);
+			return -EIO;
 		}
-		regulator_put(vreg_bt);
 		for (pin = 0; pin < ARRAY_SIZE(bt_config_power_off); pin++) {
 			rc = gpio_tlmm_config(bt_config_power_off[pin],
 					      GPIO_CFG_ENABLE);
@@ -811,11 +993,6 @@ static int bluetooth_power(int on)
 		}
 	}
 	return 0;
-
-bt_vreg_fail:
-	regulator_put(vreg_bt);
-out:
-	return rc;
 }
 
 static void __init bt_power_init(void)
@@ -824,6 +1001,41 @@ static void __init bt_power_init(void)
 }
 #else
 #define bt_power_init(x) do {} while (0)
+#endif
+
+#ifdef CONFIG_ARCH_MSM7X27
+static struct resource kgsl_resources[] = {
+	{
+		.name = "kgsl_reg_memory",
+		.start = 0xA0000000,
+		.end = 0xA001ffff,
+		.flags = IORESOURCE_MEM,
+	},
+	{
+		.name   = "kgsl_phys_memory",
+		.start = 0,
+		.end = 0,
+		.flags = IORESOURCE_MEM,
+	},
+	{
+		.name = "kgsl_yamato_irq",
+		.start = INT_GRAPHICS,
+		.end = INT_GRAPHICS,
+		.flags = IORESOURCE_IRQ,
+	},
+};
+
+static struct kgsl_platform_data kgsl_pdata;
+
+static struct platform_device msm_device_kgsl = {
+	.name = "kgsl",
+	.id = -1,
+	.num_resources = ARRAY_SIZE(kgsl_resources),
+	.resource = kgsl_resources,
+	.dev = {
+		.platform_data = &kgsl_pdata,
+	},
+};
 #endif
 
 static struct platform_device msm_device_pmic_leds = {
@@ -946,96 +1158,71 @@ static void config_gpio_table(uint32_t *table, int len)
 	}
 }
 
+static struct vreg *vreg_gp2;
+static struct vreg *vreg_gp3;
+
 static void msm_camera_vreg_config(int vreg_en)
 {
 	int rc;
-	static struct regulator *vreg_gp2;
-	static struct regulator *vreg_gp3;
 
-	if (vreg_gp2 == NULL && vreg_gp3 == NULL) {
-		vreg_gp2 = regulator_get(NULL, "gp2");
+	if (vreg_gp2 == NULL) {
+		vreg_gp2 = vreg_get(NULL, "gp2");
 		if (IS_ERR(vreg_gp2)) {
-			rc = PTR_ERR(vreg_gp2);
-			pr_err("%s: could not get regulator: %d\n",
-					__func__, rc);
+			printk(KERN_ERR "%s: vreg_get(%s) failed (%ld)\n",
+				__func__, "gp2", PTR_ERR(vreg_gp2));
 			return;
 		}
 
-		rc = regulator_set_voltage(vreg_gp2, 1800000, 1800000);
-		if (rc < 0) {
-			pr_err("%s: could not set voltage: %d\n",
-					__func__, rc);
-			goto cam_vreg_fail;
+		rc = vreg_set_level(vreg_gp2, 1800);
+		if (rc) {
+			printk(KERN_ERR "%s: GP2 set_level failed (%d)\n",
+				__func__, rc);
 		}
-
-		vreg_gp3 = regulator_get(NULL, "gp3");
-		if (IS_ERR(vreg_gp3)) {
-			rc = PTR_ERR(vreg_gp3);
-			pr_err("%s: could not get regulator: %d\n",
-					__func__, rc);
-			goto cam_vreg_fail;
-		}
-
-		rc = regulator_set_voltage(vreg_gp3, 2850000, 2850000);
-		if (rc < 0) {
-			pr_err("%s: could not set voltage: %d\n", __func__, rc);
-			goto cam_vreg2_fail;
-		}
-
-		return;
-
 	}
 
-	if (vreg_gp2 == NULL || vreg_gp3 == NULL) {
-		pr_err("Camera Regulators are not initialized\n");
-		return;
+	if (vreg_gp3 == NULL) {
+		vreg_gp3 = vreg_get(NULL, "gp3");
+		if (IS_ERR(vreg_gp3)) {
+			printk(KERN_ERR "%s: vreg_get(%s) failed (%ld)\n",
+				__func__, "gp3", PTR_ERR(vreg_gp3));
+			return;
+		}
+
+		rc = vreg_set_level(vreg_gp3, 2850);
+		if (rc) {
+			printk(KERN_ERR "%s: GP3 set level failed (%d)\n",
+				__func__, rc);
+		}
 	}
 
 	if (vreg_en) {
-		rc = regulator_enable(vreg_gp2);
+		rc = vreg_enable(vreg_gp2);
 		if (rc) {
-			pr_err("%s: could not enable regulator: %d\n",
-					__func__, rc);
-			goto cam_vreg2_fail;
+			printk(KERN_ERR "%s: GP2 enable failed (%d)\n",
+				 __func__, rc);
 		}
 
-		rc = regulator_enable(vreg_gp3);
+		rc = vreg_enable(vreg_gp3);
 		if (rc) {
-			pr_err("%s: could not enable regulator: %d\n",
-					__func__, rc);
-			goto vreg_gp3_fail;
+			printk(KERN_ERR "%s: GP3 enable failed (%d)\n",
+				__func__, rc);
 		}
 	} else {
-		rc = regulator_disable(vreg_gp2);
+		rc = vreg_disable(vreg_gp2);
 		if (rc) {
-			pr_err("%s: could not disable regulator: %d\n",
-					__func__, rc);
-			return;
+			printk(KERN_ERR "%s: GP2 disable failed (%d)\n",
+				 __func__, rc);
 		}
 
-		rc = regulator_disable(vreg_gp3);
+		rc = vreg_disable(vreg_gp3);
 		if (rc) {
-			pr_err("%s: could not disable regulator: %d\n",
-					__func__, rc);
-			goto cam_vreg2_fail;
+			printk(KERN_ERR "%s: GP3 disable failed (%d)\n",
+				__func__, rc);
 		}
 	}
-
-	return;
-
-vreg_gp3_fail:
-	if (vreg_en)
-		regulator_disable(vreg_gp2);
-
-cam_vreg2_fail:
-	regulator_put(vreg_gp3);
-cam_vreg_fail:
-	regulator_put(vreg_gp2);
-	vreg_gp3 = NULL;
-	vreg_gp2 = NULL;
 }
 
-static int config_camera_on_gpios(void)
+static void config_camera_on_gpios(void)
 {
 	int vreg_en = 1;
 
@@ -1045,7 +1232,6 @@ static int config_camera_on_gpios(void)
 
 	config_gpio_table(camera_on_gpio_table,
 		ARRAY_SIZE(camera_on_gpio_table));
-	return 0;
 }
 
 static void config_camera_off_gpios(void)
@@ -1258,10 +1444,9 @@ static struct platform_device msm_batt_device = {
 
 
 static struct platform_device *devices[] __initdata = {
-	&asoc_msm_pcm,
-	&asoc_msm_dai0,
-	&asoc_msm_dai1,
-
+#if !defined(CONFIG_MSM_SERIAL_DEBUGGER)
+	&msm_device_uart3,
+#endif
 	&msm_device_smd,
 	&msm_device_dmov,
 	&msm_device_nand,
@@ -1273,13 +1458,20 @@ static struct platform_device *devices[] __initdata = {
 #endif
 #endif
 
-#ifdef CONFIG_USB_G_ANDROID
-	&android_usb_device,
+#ifdef CONFIG_USB_FUNCTION
+	&msm_device_hsusb_peripheral,
+	&mass_storage_device,
 #endif
 
+#ifdef CONFIG_USB_ANDROID
+	&usb_mass_storage_device,
+	&rndis_device,
+	&android_usb_device,
+#endif
 	&msm_device_i2c,
 	&smc91x_device,
 	&msm_device_tssc,
+	&android_pmem_kernel_ebi1_device,
 	&android_pmem_device,
 	&android_pmem_adsp_device,
 	&android_pmem_audio_device,
@@ -1312,7 +1504,7 @@ static struct platform_device *devices[] __initdata = {
 #endif
 	&msm_bluesleep_device,
 #ifdef CONFIG_ARCH_MSM7X27
-	&msm_kgsl_3d0,
+	&msm_device_kgsl,
 #endif
 #if defined(CONFIG_TSIF) || defined(CONFIG_TSIF_MODULE)
 	&msm_device_tsif,
@@ -1323,7 +1515,6 @@ static struct platform_device *devices[] __initdata = {
 
 static struct msm_panel_common_pdata mdp_pdata = {
 	.gpio = 97,
-	.mdp_rev = MDP_REV_30,
 };
 
 static void __init msm_fb_add_devices(void)
@@ -1340,6 +1531,13 @@ static void __init msm7x2x_init_irq(void)
 	msm_init_irq();
 }
 
+static struct msm_acpu_clock_platform_data msm7x2x_clock_data = {
+	.acpu_switch_time_us = 50,
+	.max_speed_delta_khz = 400000,
+	.vdd_switch_time_us = 62,
+	.max_axi_khz = 160000,
+};
+
 void msm_serial_debug_init(unsigned int base, int irq,
 			   struct device *clk_device, int signal_irq);
 
@@ -1349,7 +1547,7 @@ void msm_serial_debug_init(unsigned int base, int irq,
 	|| defined(CONFIG_MMC_MSM_SDC4_SUPPORT))
 
 static unsigned long vreg_sts, gpio_sts;
-static struct regulator *vreg_mmc;
+static struct vreg *vreg_mmc;
 static unsigned mpp_mmc = 2;
 
 struct sdcc_gpio {
@@ -1472,11 +1670,10 @@ static uint32_t msm_sdcc_setup_power(struct device *dv, unsigned int vdd)
 				     MPP_CFG(MPP_DLOGIC_LVL_MSMP,
 				     MPP_DLOGIC_OUT_CTRL_LOW));
 			} else
-				rc = regulator_disable(vreg_mmc);
-			if (rc) {
-				pr_err("%s: return val: %d\n",
+				rc = vreg_disable(vreg_mmc);
+			if (rc)
+				printk(KERN_ERR "%s: return val: %d \n",
 					__func__, rc);
-			}
 		}
 		return 0;
 	}
@@ -1487,14 +1684,13 @@ static uint32_t msm_sdcc_setup_power(struct device *dv, unsigned int vdd)
 			     MPP_CFG(MPP_DLOGIC_LVL_MSMP,
 			     MPP_DLOGIC_OUT_CTRL_HIGH));
 		} else {
-			rc = regulator_set_voltage(vreg_mmc, 2850000, 2850000);
+			rc = vreg_set_level(vreg_mmc, 2850);
 			if (!rc)
-				rc = regulator_enable(vreg_mmc);
+				rc = vreg_enable(vreg_mmc);
 		}
-		if (rc) {
-			pr_err("%s: return val: %d\n",
+		if (rc)
+			printk(KERN_ERR "%s: return val: %d \n",
 					__func__, rc);
-		}
 	}
 	set_bit(pdev->id, &vreg_sts);
 	return 0;
@@ -1523,7 +1719,7 @@ static struct mmc_platform_data msm7x2x_sdc2_data = {
 	.msmsdcc_fmin	= 144000,
 	.msmsdcc_fmid	= 24576000,
 	.msmsdcc_fmax	= 49152000,
-	.nonremovable	= 0,
+	.nonremovable	= 1,
 };
 #endif
 
@@ -1551,13 +1747,29 @@ static struct mmc_platform_data msm7x2x_sdc4_data = {
 };
 #endif
 
+#ifdef CONFIG_MMC_MSM_SDC2_SUPPORT
+static void sdio_wakeup_gpiocfg_slot2(void)
+{
+	gpio_request(66, "sdio_wakeup");
+	gpio_direction_output(66, 1);
+	/*
+	 * MSM GPIO 66 will be used as both SDIO wakeup irq and
+	 * DATA_1 for slot 2. Hence, leave it to SDCC driver to
+	 * request this gpio again when it wants to use it as a
+	 * data line.
+	 */
+	gpio_free(66);
+}
+#endif
+
 static void __init msm7x2x_init_mmc(void)
 {
 	if (!machine_is_msm7x25_ffa() && !machine_is_msm7x27_ffa()) {
-		vreg_mmc = regulator_get(NULL, "mmc");
+		vreg_mmc = vreg_get(NULL, "mmc");
 		if (IS_ERR(vreg_mmc)) {
-			pr_err("%s: could not get regulator: %ld\n",
-					__func__, PTR_ERR(vreg_mmc));
+			printk(KERN_ERR "%s: vreg get failed (%ld)\n",
+			       __func__, PTR_ERR(vreg_mmc));
+			return;
 		}
 	}
 
@@ -1568,7 +1780,7 @@ static void __init msm7x2x_init_mmc(void)
 	if (machine_is_msm7x25_surf() || machine_is_msm7x27_surf() ||
 		machine_is_msm7x27_ffa()) {
 #ifdef CONFIG_MMC_MSM_SDC2_SUPPORT
-		msm_sdcc_setup_gpio(2, 1);
+		sdio_wakeup_gpiocfg_slot2();
 		msm_add_sdcc(2, &msm7x2x_sdc2_data);
 #endif
 	}
@@ -1596,37 +1808,24 @@ static struct msm_pm_platform_data msm7x25_pm_data[MSM_PM_SLEEP_MODE_NR] = {
 };
 
 static struct msm_pm_platform_data msm7x27_pm_data[MSM_PM_SLEEP_MODE_NR] = {
-	[MSM_PM_SLEEP_MODE_POWER_COLLAPSE] = {
-		.idle_supported = 1,
-		.suspend_supported = 1,
-		.idle_enabled = 1,
-		.suspend_enabled = 1,
-		.latency = 16000,
-		.residency = 20000,
-	},
+	[MSM_PM_SLEEP_MODE_POWER_COLLAPSE].supported = 1,
+	[MSM_PM_SLEEP_MODE_POWER_COLLAPSE].suspend_enabled = 1,
+	[MSM_PM_SLEEP_MODE_POWER_COLLAPSE].idle_enabled = 1,
+	[MSM_PM_SLEEP_MODE_POWER_COLLAPSE].latency = 16000,
+	[MSM_PM_SLEEP_MODE_POWER_COLLAPSE].residency = 20000,
 
-	[MSM_PM_SLEEP_MODE_POWER_COLLAPSE_NO_XO_SHUTDOWN] = {
-		.idle_supported = 1,
-		.suspend_supported = 1,
-		.idle_enabled = 1,
-		.suspend_enabled = 1,
-		.latency = 12000,
-		.residency = 20000,
-	},
+	[MSM_PM_SLEEP_MODE_POWER_COLLAPSE_NO_XO_SHUTDOWN].supported = 1,
+	[MSM_PM_SLEEP_MODE_POWER_COLLAPSE_NO_XO_SHUTDOWN].suspend_enabled = 1,
+	[MSM_PM_SLEEP_MODE_POWER_COLLAPSE_NO_XO_SHUTDOWN].idle_enabled = 1,
+	[MSM_PM_SLEEP_MODE_POWER_COLLAPSE_NO_XO_SHUTDOWN].latency = 12000,
+	[MSM_PM_SLEEP_MODE_POWER_COLLAPSE_NO_XO_SHUTDOWN].residency = 20000,
 
-	[MSM_PM_SLEEP_MODE_RAMP_DOWN_AND_WAIT_FOR_INTERRUPT] = {
-		.idle_supported = 1,
-		.suspend_supported = 1,
-		.idle_enabled = 1,
-		.suspend_enabled = 1,
-		.latency = 2000,
-		.residency = 0,
-	},
-};
-
-static struct msm_pm_boot_platform_data msm_pm_boot_pdata __initdata = {
-	.mode = MSM_PM_BOOT_CONFIG_RESET_VECTOR_PHYS,
-	.p_addr = 0,
+	[MSM_PM_SLEEP_MODE_RAMP_DOWN_AND_WAIT_FOR_INTERRUPT].supported = 1,
+	[MSM_PM_SLEEP_MODE_RAMP_DOWN_AND_WAIT_FOR_INTERRUPT].suspend_enabled
+		= 1,
+	[MSM_PM_SLEEP_MODE_RAMP_DOWN_AND_WAIT_FOR_INTERRUPT].idle_enabled = 1,
+	[MSM_PM_SLEEP_MODE_RAMP_DOWN_AND_WAIT_FOR_INTERRUPT].latency = 2000,
+	[MSM_PM_SLEEP_MODE_RAMP_DOWN_AND_WAIT_FOR_INTERRUPT].residency = 0,
 };
 
 static void
@@ -1663,21 +1862,7 @@ static struct msm_i2c_platform_data msm_i2c_pdata = {
 	.aux_dat = 96,
 	.msm_i2c_config_gpio = msm_i2c_gpio_config,
 };
-static struct platform_device msm_proccomm_regulator_dev = {
-	.name   = PROCCOMM_REGULATOR_DEV_NAME,
-	.id     = -1,
-	.dev    = {
-		.platform_data = &msm7627_proccomm_regulator_data
-	}
-};
 
-static void __init msm7627_init_regulators(void)
-{
-	int rc = platform_device_register(&msm_proccomm_regulator_dev);
-	if (rc)
-		pr_err("%s: could not register regulator device: %d\n",
-				__func__, rc);
-}
 static void __init msm_device_i2c_init(void)
 {
 	if (gpio_request(60, "i2c_pri_clk"))
@@ -1731,12 +1916,17 @@ static void msm7x27_wlan_init(void)
 
 static void __init msm7x2x_init(void)
 {
-
-	msm7627_init_regulators();
+	if (socinfo_init() < 0)
+		BUG();
 #ifdef CONFIG_ARCH_MSM7X25
 	msm_clock_init(msm_clocks_7x25, msm_num_clocks_7x25);
 #elif defined(CONFIG_ARCH_MSM7X27)
-	msm_clock_init(&msm7x27_clock_init_data);
+	msm_clock_init(msm_clocks_7x27, msm_num_clocks_7x27);
+#endif
+
+#if defined(CONFIG_MSM_SERIAL_DEBUGGER)
+	msm_serial_debug_init(MSM_UART3_PHYS, INT_UART3,
+			&msm_device_uart3.dev, 1);
 #endif
 
 #if defined(CONFIG_SMC91X)
@@ -1756,10 +1946,42 @@ static void __init msm7x2x_init(void)
 		}
 	}
 #endif
-	acpuclk_init(&acpuclk_7x27_soc_data);
 
+	if (cpu_is_msm7x27())
+		msm7x2x_clock_data.max_axi_khz = 200000;
+
+	msm_acpu_clock_init(&msm7x2x_clock_data);
+
+#ifdef CONFIG_ARCH_MSM7X27
+	/* Initialize the zero page for barriers and cache ops */
+	map_zero_page_strongly_ordered();
+	/* This value has been set to 160000 for power savings. */
+	/* OEMs may modify the value at their discretion for performance */
+	/* The appropriate maximum replacement for 160000 is: */
+	/* clk_get_max_axi_khz() */
+	kgsl_pdata.high_axi_3d = 160000;
+
+	/* 7x27 doesn't allow graphics clocks to be run asynchronously to */
+	/* the AXI bus */
+	kgsl_pdata.max_grp2d_freq = 0;
+	kgsl_pdata.min_grp2d_freq = 0;
+	kgsl_pdata.set_grp2d_async = NULL;
+	kgsl_pdata.max_grp3d_freq = 0;
+	kgsl_pdata.min_grp3d_freq = 0;
+	kgsl_pdata.set_grp3d_async = NULL;
+	kgsl_pdata.imem_clk_name = "imem_clk";
+	kgsl_pdata.grp3d_clk_name = "grp_clk";
+	kgsl_pdata.grp2d_clk_name = NULL;
+#endif
 	usb_mpp_init();
 
+#ifdef CONFIG_USB_FUNCTION
+	msm_hsusb_pdata.swfi_latency =
+		msm7x27_pm_data
+		[MSM_PM_SLEEP_MODE_RAMP_DOWN_AND_WAIT_FOR_INTERRUPT].latency;
+
+	msm_device_hsusb_peripheral.dev.platform_data = &msm_hsusb_pdata;
+#endif
 
 #ifdef CONFIG_USB_MSM_OTG_72K
 	msm_device_otg.dev.platform_data = &msm_otg_pdata;
@@ -1768,7 +1990,7 @@ static void __init msm7x2x_init(void)
 			PRE_EMPHASIS_WITH_20_PERCENT;
 		msm_otg_pdata.drv_ampl = HS_DRV_AMPLITUDE_5_PERCENT;
 		msm_otg_pdata.cdr_autoreset = CDR_AUTO_RESET_ENABLE;
-		msm_otg_pdata.phy_reset = msm_otg_rpc_phy_reset;
+		msm_otg_pdata.phy_reset_sig_inverted = 1;
 	}
 	if (machine_is_msm7x27_surf() || machine_is_msm7x27_ffa()) {
 		msm_otg_pdata.pemp_level =
@@ -1783,14 +2005,12 @@ static void __init msm7x2x_init(void)
 		msm7x27_pm_data
 		[MSM_PM_SLEEP_MODE_RAMP_DOWN_AND_WAIT_FOR_INTERRUPT].latency;
 	msm_device_gadget_peripheral.dev.platform_data = &msm_gadget_pdata;
-	msm_gadget_pdata.is_phy_status_timer_on = 1;
 #endif
 #endif
 #if defined(CONFIG_TSIF) || defined(CONFIG_TSIF_MODULE)
 	msm_device_tsif.dev.platform_data = &tsif_platform_data;
 #endif
-	platform_add_devices(msm_footswitch_devices,
-			     msm_num_footswitch_devices);
+
 	platform_add_devices(devices, ARRAY_SIZE(devices));
 #ifdef CONFIG_MSM_CAMERA
 	config_camera_off_gpios(); /* might not be necessary */
@@ -1806,7 +2026,7 @@ static void __init msm7x2x_init(void)
 #endif
 	lcdc_gordon_gpio_init();
 	msm_fb_add_devices();
-#ifdef CONFIG_USB_EHCI_MSM_72K
+#ifdef CONFIG_USB_EHCI_MSM
 	msm7x2x_init_host();
 #endif
 	msm7x2x_init_mmc();
@@ -1818,9 +2038,6 @@ static void __init msm7x2x_init(void)
 	else
 		msm_pm_set_platform_data(msm7x25_pm_data,
 					ARRAY_SIZE(msm7x25_pm_data));
-
-	BUG_ON(msm_pm_boot_init(&msm_pm_boot_pdata));
-
 	msm7x27_wlan_init();
 }
 
@@ -1848,14 +2065,6 @@ static int __init pmem_adsp_size_setup(char *p)
 }
 early_param("pmem_adsp_size", pmem_adsp_size_setup);
 
-static unsigned pmem_audio_size = MSM_PMEM_AUDIO_SIZE;
-static int __init pmem_audio_size_setup(char *p)
-{
-	pmem_audio_size = memparse(p, NULL);
-	return 0;
-}
-early_param("pmem_audio_size", pmem_audio_size_setup);
-
 static unsigned fb_size = MSM_FB_SIZE;
 static int __init fb_size_setup(char *p)
 {
@@ -1869,141 +2078,116 @@ static void __init msm_msm7x2x_allocate_memory_regions(void)
 	void *addr;
 	unsigned long size;
 
+	size = pmem_mdp_size;
+	if (size) {
+		addr = alloc_bootmem(size);
+		android_pmem_pdata.start = __pa(addr);
+		android_pmem_pdata.size = size;
+		pr_info("allocating %lu bytes at %p (%lx physical) for mdp "
+			"pmem arena\n", size, addr, __pa(addr));
+	}
+
+	size = pmem_adsp_size;
+	if (size) {
+		addr = alloc_bootmem(size);
+		android_pmem_adsp_pdata.start = __pa(addr);
+		android_pmem_adsp_pdata.size = size;
+		pr_info("allocating %lu bytes at %p (%lx physical) for adsp "
+			"pmem arena\n", size, addr, __pa(addr));
+	}
+
+	size = MSM_PMEM_AUDIO_SIZE ;
+	android_pmem_audio_pdata.start = MSM_PMEM_AUDIO_START_ADDR ;
+	android_pmem_audio_pdata.size = size;
+	pr_info("allocating %lu bytes (at %lx physical) for audio "
+		"pmem arena\n", size , MSM_PMEM_AUDIO_START_ADDR);
+
 	size = fb_size ? : MSM_FB_SIZE;
-	addr = alloc_bootmem_align(size, 0x1000);
+	addr = alloc_bootmem(size);
 	msm_fb_resources[0].start = __pa(addr);
 	msm_fb_resources[0].end = msm_fb_resources[0].start + size - 1;
 	pr_info("allocating %lu bytes at %p (%lx physical) for fb\n",
 		size, addr, __pa(addr));
-}
 
-static struct memtype_reserve msm7x27_reserve_table[] __initdata = {
-	[MEMTYPE_SMI] = {
-	},
-	[MEMTYPE_EBI0] = {
-		.flags	=	MEMTYPE_FLAGS_1M_ALIGN,
-	},
-	[MEMTYPE_EBI1] = {
-		.flags	=	MEMTYPE_FLAGS_1M_ALIGN,
-	},
-};
+	size = pmem_kernel_ebi1_size;
+	if (size) {
+		addr = alloc_bootmem_aligned(size, 0x100000);
+		android_pmem_kernel_ebi1_pdata.start = __pa(addr);
+		android_pmem_kernel_ebi1_pdata.size = size;
+		pr_info("allocating %lu bytes at %p (%lx physical) for kernel"
+			" ebi1 pmem arena\n", size, addr, __pa(addr));
+	}
+#ifdef CONFIG_ARCH_MSM7X27
+	size = MSM_GPU_PHYS_SIZE;
+	kgsl_resources[1].start = MSM_GPU_PHYS_START_ADDR ;
+	kgsl_resources[1].end = kgsl_resources[1].start + size - 1;
+	pr_info("allocating %lu bytes (at %lx physical) for KGSL\n",
+		size , MSM_GPU_PHYS_START_ADDR);
 
-static void __init size_pmem_devices(void)
-{
-#ifdef CONFIG_ANDROID_PMEM
-	android_pmem_adsp_pdata.size = pmem_adsp_size;
-	android_pmem_pdata.size = pmem_mdp_size;
-	android_pmem_audio_pdata.size = pmem_audio_size;
 #endif
-}
 
-static void __init reserve_memory_for(struct android_pmem_platform_data *p)
-{
-	msm7x27_reserve_table[p->memory_type].size += p->size;
-}
-
-static void __init reserve_pmem_memory(void)
-{
-#ifdef CONFIG_ANDROID_PMEM
-	reserve_memory_for(&android_pmem_adsp_pdata);
-	reserve_memory_for(&android_pmem_pdata);
-	reserve_memory_for(&android_pmem_audio_pdata);
-	msm7x27_reserve_table[MEMTYPE_EBI1].size += pmem_kernel_ebi1_size;
-#endif
-}
-
-static void __init msm7x27_calculate_reserve_sizes(void)
-{
-	size_pmem_devices();
-	reserve_pmem_memory();
-}
-
-static int msm7x27_paddr_to_memtype(unsigned int paddr)
-{
-	return MEMTYPE_EBI1;
-}
-
-static struct reserve_info msm7x27_reserve_info __initdata = {
-	.memtype_reserve_table = msm7x27_reserve_table,
-	.calculate_reserve_sizes = msm7x27_calculate_reserve_sizes,
-	.paddr_to_memtype = msm7x27_paddr_to_memtype,
-};
-
-static void __init msm7x27_reserve(void)
-{
-	reserve_info = &msm7x27_reserve_info;
-	msm_reserve();
-}
-
-static void __init msm7x27_init_early(void)
-{
-	msm_msm7x2x_allocate_memory_regions();
 }
 
 static void __init msm7x2x_map_io(void)
 {
 	msm_map_common_io();
-
-	if (socinfo_init() < 0)
-		BUG();
+	msm_msm7x2x_allocate_memory_regions();
 
 #ifdef CONFIG_CACHE_L2X0
 	if (machine_is_msm7x27_surf() || machine_is_msm7x27_ffa()) {
 		/* 7x27 has 256KB L2 cache:
 			64Kb/Way and 4-Way Associativity;
+			R/W latency: 3 cycles;
 			evmon/parity/share disabled. */
-		if ((SOCINFO_VERSION_MAJOR(socinfo_get_version()) > 1)
-			|| ((SOCINFO_VERSION_MAJOR(socinfo_get_version()) == 1)
-			&& (SOCINFO_VERSION_MINOR(socinfo_get_version()) >= 3)))
-			/* R/W latency: 4 cycles; */
-			l2x0_init(MSM_L2CC_BASE, 0x0006801B, 0xfe000000);
-		else
-			/* R/W latency: 3 cycles; */
-			l2x0_init(MSM_L2CC_BASE, 0x00068012, 0xfe000000);
+		l2x0_init(MSM_L2CC_BASE, 0x00068012, 0xfe000000);
 	}
 #endif
 }
 
 MACHINE_START(MSM7X27_SURF, "QCT MSM7x27 SURF")
-	.boot_params	= PLAT_PHYS_OFFSET + 0x100,
+#ifdef CONFIG_MSM_DEBUG_UART
+	.phys_io        = MSM_DEBUG_UART_PHYS,
+	.io_pg_offst    = ((MSM_DEBUG_UART_BASE) >> 18) & 0xfffc,
+#endif
+	.boot_params	= PHYS_OFFSET + 0x100,
 	.map_io		= msm7x2x_map_io,
-	.reserve	= msm7x27_reserve,
 	.init_irq	= msm7x2x_init_irq,
 	.init_machine	= msm7x2x_init,
 	.timer		= &msm_timer,
-        .init_early     = msm7x27_init_early,
-	.handle_irq     = vic_handle_irq,
 MACHINE_END
 
 MACHINE_START(MSM7X27_FFA, "QCT MSM7x27 FFA")
-	.boot_params	= PLAT_PHYS_OFFSET + 0x100,
+#ifdef CONFIG_MSM_DEBUG_UART
+	.phys_io        = MSM_DEBUG_UART_PHYS,
+	.io_pg_offst    = ((MSM_DEBUG_UART_BASE) >> 18) & 0xfffc,
+#endif
+	.boot_params	= PHYS_OFFSET + 0x100,
 	.map_io		= msm7x2x_map_io,
-	.reserve	= msm7x27_reserve,
 	.init_irq	= msm7x2x_init_irq,
 	.init_machine	= msm7x2x_init,
 	.timer		= &msm_timer,
-        .init_early     = msm7x27_init_early,
-	.handle_irq     = vic_handle_irq,
 MACHINE_END
 
 MACHINE_START(MSM7X25_SURF, "QCT MSM7x25 SURF")
-	.boot_params	= PLAT_PHYS_OFFSET + 0x100,
+#ifdef CONFIG_MSM_DEBUG_UART
+	.phys_io        = MSM_DEBUG_UART_PHYS,
+	.io_pg_offst    = ((MSM_DEBUG_UART_BASE) >> 18) & 0xfffc,
+#endif
+	.boot_params	= PHYS_OFFSET + 0x100,
 	.map_io		= msm7x2x_map_io,
-	.reserve	= msm7x27_reserve,
 	.init_irq	= msm7x2x_init_irq,
 	.init_machine	= msm7x2x_init,
 	.timer		= &msm_timer,
-        .init_early     = msm7x27_init_early,
-	.handle_irq     = vic_handle_irq,
 MACHINE_END
 
 MACHINE_START(MSM7X25_FFA, "QCT MSM7x25 FFA")
-	.boot_params	= PLAT_PHYS_OFFSET + 0x100,
+#ifdef CONFIG_MSM_DEBUG_UART
+	.phys_io        = MSM_DEBUG_UART_PHYS,
+	.io_pg_offst    = ((MSM_DEBUG_UART_BASE) >> 18) & 0xfffc,
+#endif
+	.boot_params	= PHYS_OFFSET + 0x100,
 	.map_io		= msm7x2x_map_io,
-	.reserve	= msm7x27_reserve,
 	.init_irq	= msm7x2x_init_irq,
 	.init_machine	= msm7x2x_init,
 	.timer		= &msm_timer,
-        .init_early     = msm7x27_init_early,
-	.handle_irq     = vic_handle_irq,
 MACHINE_END

@@ -56,7 +56,7 @@ static struct snd_pcm_hardware msm_pcm_playback_hardware = {
 	.rate_min =             USE_RATE_MIN,
 	.rate_max =             48000,
 	.channels_min =         1,
-	.channels_max =         2,
+	.channels_max =         1,
 	.buffer_bytes_max =     MAX_BUFFER_PLAYBACK_SIZE,
 	.period_bytes_min =     BUFSZ,
 	.period_bytes_max =     BUFSZ,
@@ -72,9 +72,9 @@ static struct snd_pcm_hardware msm_pcm_capture_hardware = {
 	.rate_min =             8000,
 	.rate_max =             48000,
 	.channels_min =         1,
-	.channels_max =         2,
+	.channels_max =         1,
 	.buffer_bytes_max =     MAX_BUFFER_CAPTURE_SIZE,
-	.period_bytes_min =	4096,
+	.period_bytes_min =    	4096,
 	.period_bytes_max =     4096,
 	.periods_min =          4,
 	.periods_max =          4,
@@ -376,16 +376,13 @@ static int msm_pcm_open(struct snd_pcm_substream *substream)
 		return ret;
 	}
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
-		if (prtd->opened) {
-			kfree(prtd);
+		if (prtd->opened)
 			return -EBUSY;
-		}
 		runtime->hw = msm_pcm_playback_hardware;
 		prtd->dir = SNDRV_PCM_STREAM_PLAYBACK;
 		prtd->eos_ack = 0;
 		prtd->session_id = HOSTPCM_STREAM_ID;
 		prtd->device_events = AUDDEV_EVT_DEV_RDY |
-				AUDDEV_EVT_STREAM_VOL_CHG |
 				AUDDEV_EVT_DEV_RLS;
 		prtd->source = msm_snddev_route_dec(prtd->session_id);
 		MM_ERR("Register device event listener\n");
@@ -479,8 +476,8 @@ static int msm_pcm_playback_copy(struct snd_pcm_substream *substream, int a,
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct msm_audio *prtd = runtime->private_data;
 
-	fbytes = frames_to_bytes(runtime, frames);
 	MM_DBG("%d\n", fbytes);
+	fbytes = frames_to_bytes(runtime, frames);
 	ret = alsa_send_buffer(prtd, buf, fbytes, NULL);
 	++copy_count;
 	prtd->pcm_buf_pos += fbytes;
@@ -520,6 +517,7 @@ done:
 	alsa_audio_disable(prtd);
 	auddev_unregister_evt_listner(AUDDEV_CLNT_DEC, prtd->session_id);
 	kfree(prtd);
+	prtd->opened = 0;
 
 	return 0;
 }
@@ -539,8 +537,8 @@ static int msm_pcm_capture_copy(struct snd_pcm_substream *substream,
 	if (prtd->abort)
 		return -EPERM;
 
-	fbytes = frames_to_bytes(runtime, frames);
 	MM_DBG("%d\n", fbytes);
+	fbytes = frames_to_bytes(runtime, frames);
 	monofbytes = fbytes / 2;
 	if (runtime->channels == 2) {
 		ret = alsa_buffer_read(prtd, buf, fbytes, NULL);
@@ -574,6 +572,7 @@ static int msm_pcm_capture_close(struct snd_pcm_substream *substream)
 	audpreproc_aenc_free(prtd->session_id);
 	msm_adsp_put(prtd->audrec);
 	kfree(prtd);
+	prtd->opened = 0;
 	return 0;
 }
 
@@ -616,7 +615,7 @@ static snd_pcm_uframes_t msm_pcm_pointer(struct snd_pcm_substream *substream)
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct msm_audio *prtd = runtime->private_data;
 
-	MM_DBG("pcm_irq_pos = %d\n", prtd->pcm_irq_pos);
+	MM_DBG("\n");
 	if (prtd->pcm_irq_pos == prtd->pcm_size)
 		prtd->pcm_irq_pos = 0;
 	return bytes_to_frames(runtime, (prtd->pcm_irq_pos));
@@ -656,6 +655,17 @@ static struct snd_pcm_ops msm_pcm_ops = {
 	.pointer        = msm_pcm_pointer,
 	.mmap           = msm_pcm_mmap,
 };
+
+
+
+static int msm_pcm_remove(struct platform_device *devptr)
+{
+	struct snd_soc_device *socdev = platform_get_drvdata(devptr);
+	snd_soc_free_pcms(socdev);
+	kfree(socdev->card->codec);
+	platform_set_drvdata(devptr, NULL);
+	return 0;
+}
 
 static int pcm_preallocate_buffer(struct snd_pcm *pcm,
 	int stream)
@@ -701,72 +711,48 @@ static void msm_pcm_free_buffers(struct snd_pcm *pcm)
 	}
 }
 
-static int msm_pcm_new(struct snd_soc_pcm_runtime *rtd)
+static int msm_pcm_new(struct snd_card *card,
+			struct snd_soc_dai *codec_dai,
+			struct snd_pcm *pcm)
 {
 	int ret = 0;
-	struct snd_card *card = rtd->card->snd_card;
-	struct snd_pcm *pcm = rtd->pcm;
-
-	ret = snd_pcm_new_stream(pcm, SNDRV_PCM_STREAM_PLAYBACK, 1);
-	if (ret)
-		return ret;
-	ret = snd_pcm_new_stream(pcm, SNDRV_PCM_STREAM_CAPTURE, 1);
-	if (ret)
-		return ret;
-	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK, &msm_pcm_ops);
-	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &msm_pcm_ops);
-
 	if (!card->dev->coherent_dma_mask)
 		card->dev->coherent_dma_mask = DMA_BIT_MASK(32);
 
-	ret = pcm_preallocate_buffer(pcm,
+	if (codec_dai->playback.channels_min) {
+		ret = pcm_preallocate_buffer(pcm,
 			SNDRV_PCM_STREAM_PLAYBACK);
-	if (ret)
-		return ret;
-	ret = pcm_preallocate_buffer(pcm,
+		if (ret)
+			return ret;
+	}
+	if (codec_dai->playback.channels_min) {
+		ret = pcm_preallocate_buffer(pcm,
 			SNDRV_PCM_STREAM_CAPTURE);
-	if (ret)
-		msm_pcm_free_buffers(pcm);
+		if (ret)
+			msm_pcm_free_buffers(pcm);
+	}
+
 	return ret;
 }
 
-struct snd_soc_platform_driver msm_soc_platform = {
-	.ops            = &msm_pcm_ops,
+struct snd_soc_platform msm_soc_platform = {
+	.name		= "msm-audio",
+	.remove         = msm_pcm_remove,
+	.pcm_ops 	= &msm_pcm_ops,
 	.pcm_new	= msm_pcm_new,
 	.pcm_free	= msm_pcm_free_buffers,
 };
 EXPORT_SYMBOL(msm_soc_platform);
 
-static __devinit int msm_pcm_probe(struct platform_device *pdev)
-{
-	return snd_soc_register_platform(&pdev->dev,
-				&msm_soc_platform);
-}
-
-static int msm_pcm_remove(struct platform_device *pdev)
-{
-	snd_soc_unregister_platform(&pdev->dev);
-	return 0;
-}
-
-static struct platform_driver msm_pcm_driver = {
-	.driver = {
-		.name = "msm-dsp-audio",
-		.owner = THIS_MODULE,
-	},
-	.probe = msm_pcm_probe,
-	.remove = __devexit_p(msm_pcm_remove),
-};
-
 static int __init msm_soc_platform_init(void)
 {
-	return platform_driver_register(&msm_pcm_driver);
+	return snd_soc_register_platform(&msm_soc_platform);
 }
 module_init(msm_soc_platform_init);
 
 static void __exit msm_soc_platform_exit(void)
 {
-	 platform_driver_unregister(&msm_pcm_driver);
+	snd_soc_unregister_platform(&msm_soc_platform);
 }
 module_exit(msm_soc_platform_exit);
 

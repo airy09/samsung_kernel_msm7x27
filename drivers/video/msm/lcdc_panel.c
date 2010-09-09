@@ -9,6 +9,11 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
  */
 
 #include "msm_fb.h"
@@ -23,7 +28,7 @@ static int lcdc_panel_off(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devinit lcdc_panel_probe(struct platform_device *pdev)
+static int __init lcdc_panel_probe(struct platform_device *pdev)
 {
 	msm_fb_add_device(pdev);
 

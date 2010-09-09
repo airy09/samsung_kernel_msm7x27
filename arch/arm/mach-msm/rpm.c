@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -8,6 +8,11 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  *
  */
 
@@ -25,16 +30,29 @@
 #include <linux/mutex.h>
 #include <linux/semaphore.h>
 #include <linux/spinlock.h>
-#include <linux/device.h>
-#include <linux/platform_device.h>
 #include <asm/hardware/gic.h>
 #include <mach/msm_iomap.h>
-#include <mach/rpm.h>
-#include <mach/socinfo.h>
+
+#include "rpm.h"
 
 /******************************************************************************
  * Data type and structure definitions
  *****************************************************************************/
+
+enum {
+	MSM_RPM_CTRL_VERSION_MAJOR,
+	MSM_RPM_CTRL_VERSION_MINOR,
+	MSM_RPM_CTRL_VERSION_BUILD,
+
+	MSM_RPM_CTRL_REQ_CTX_0,
+	MSM_RPM_CTRL_REQ_CTX_7 = MSM_RPM_CTRL_REQ_CTX_0 + 7,
+	MSM_RPM_CTRL_REQ_SEL_0,
+	MSM_RPM_CTRL_REQ_SEL_7 = MSM_RPM_CTRL_REQ_SEL_0 + 7,
+	MSM_RPM_CTRL_ACK_CTX_0,
+	MSM_RPM_CTRL_ACK_CTX_7 = MSM_RPM_CTRL_ACK_CTX_0 + 7,
+	MSM_RPM_CTRL_ACK_SEL_0,
+	MSM_RPM_CTRL_ACK_SEL_7 = MSM_RPM_CTRL_ACK_SEL_0 + 7,
+};
 
 struct msm_rpm_request {
 	struct msm_rpm_iv_pair *req;
@@ -44,12 +62,121 @@ struct msm_rpm_request {
 	struct completion *done;
 };
 
+struct msm_rpm_map_data {
+	uint32_t id;
+	uint32_t sel;
+	uint32_t count;
+};
+
+#define MSM_RPM_MAP(i, s, c) { \
+	.id = MSM_RPM_ID_##i, .sel = MSM_RPM_SEL_##s, .count = c }
+
 struct msm_rpm_notif_config {
 	struct msm_rpm_iv_pair iv[MSM_RPM_SEL_MASK_SIZE * 2];
 };
 
 #define configured_iv(notif_cfg) ((notif_cfg)->iv)
 #define registered_iv(notif_cfg) ((notif_cfg)->iv + MSM_RPM_SEL_MASK_SIZE)
+
+#define APPS_IPC (MSM_GCC_BASE + 0x008)
+#define APPS_IPC_RPM 4
+
+/******************************************************************************
+ * Internal variables
+ *****************************************************************************/
+
+static struct msm_rpm_map_data msm_rpm_raw_map[] __initdata = {
+	MSM_RPM_MAP(TRIGGER_TIMED_TO, TRIGGER_TIMED, 1),
+	MSM_RPM_MAP(TRIGGER_TIMED_SCLK_COUNT, TRIGGER_TIMED, 1),
+	MSM_RPM_MAP(TRIGGER_SET_FROM, TRIGGER_SET, 1),
+	MSM_RPM_MAP(TRIGGER_SET_TO, TRIGGER_SET, 1),
+	MSM_RPM_MAP(TRIGGER_SET_TRIGGER, TRIGGER_SET, 1),
+	MSM_RPM_MAP(TRIGGER_CLEAR_FROM, TRIGGER_CLEAR, 1),
+	MSM_RPM_MAP(TRIGGER_CLEAR_TO, TRIGGER_CLEAR, 1),
+	MSM_RPM_MAP(TRIGGER_CLEAR_TRIGGER, TRIGGER_CLEAR, 1),
+
+	MSM_RPM_MAP(CXO_CLK, CXO_CLK, 1),
+	MSM_RPM_MAP(PXO_CLK, PXO_CLK, 1),
+	MSM_RPM_MAP(PLL_4, PLL_4, 1),
+	MSM_RPM_MAP(APPS_FABRIC_CLK, APPS_FABRIC_CLK, 1),
+	MSM_RPM_MAP(SYSTEM_FABRIC_CLK, SYSTEM_FABRIC_CLK, 1),
+	MSM_RPM_MAP(MM_FABRIC_CLK, MM_FABRIC_CLK, 1),
+	MSM_RPM_MAP(DAYTONA_FABRIC_CLK, DAYTONA_FABRIC_CLK, 1),
+	MSM_RPM_MAP(SFPB_CLK, SFPB_CLK, 1),
+	MSM_RPM_MAP(CFPB_CLK, CFPB_CLK, 1),
+	MSM_RPM_MAP(MMFPB_CLK, MMFPB_CLK, 1),
+	MSM_RPM_MAP(SMI_CLK, SMI_CLK, 1),
+	MSM_RPM_MAP(EBI1_CLK, EBI1_CLK, 1),
+
+	MSM_RPM_MAP(APPS_L2_CACHE_CTL, APPS_L2_CACHE_CTL, 1),
+
+	MSM_RPM_MAP(APPS_FABRIC_HALT_0, APPS_FABRIC_HALT, 2),
+	MSM_RPM_MAP(APPS_FABRIC_CLOCK_MODE_0, APPS_FABRIC_CLOCK_MODE, 3),
+	MSM_RPM_MAP(APPS_FABRIC_ARB_0, APPS_FABRIC_ARB, 6),
+
+	MSM_RPM_MAP(SYSTEM_FABRIC_HALT_0, SYSTEM_FABRIC_HALT, 2),
+	MSM_RPM_MAP(SYSTEM_FABRIC_CLOCK_MODE_0, SYSTEM_FABRIC_CLOCK_MODE, 3),
+	MSM_RPM_MAP(SYSTEM_FABRIC_ARB_0, SYSTEM_FABRIC_ARB, 22),
+
+	MSM_RPM_MAP(MM_FABRIC_HALT_0, MM_FABRIC_HALT, 2),
+	MSM_RPM_MAP(MM_FABRIC_CLOCK_MODE_0, MM_FABRIC_CLOCK_MODE, 3),
+	MSM_RPM_MAP(MM_FABRIC_ARB_0, MM_FABRIC_ARB, 15),
+
+	MSM_RPM_MAP(SMPS0B_0, SMPS0B, 2),
+	MSM_RPM_MAP(SMPS1B_0, SMPS1B, 2),
+	MSM_RPM_MAP(SMPS2B_0, SMPS2B, 2),
+	MSM_RPM_MAP(SMPS3B_0, SMPS3B, 2),
+	MSM_RPM_MAP(SMPS4B_0, SMPS4B, 2),
+	MSM_RPM_MAP(LDO0B_0, LDO0B, 2),
+	MSM_RPM_MAP(LDO1B_0, LDO1B, 2),
+	MSM_RPM_MAP(LDO2B_0, LDO2B, 2),
+	MSM_RPM_MAP(LDO3B_0, LDO3B, 2),
+	MSM_RPM_MAP(LDO4B_0, LDO4B, 2),
+	MSM_RPM_MAP(LDO5B_0, LDO5B, 2),
+	MSM_RPM_MAP(LDO6B_0, LDO6B, 2),
+	MSM_RPM_MAP(LVS0B, LVS0B, 1),
+	MSM_RPM_MAP(LVS1B, LVS1B, 1),
+	MSM_RPM_MAP(LVS2B, LVS2B, 1),
+	MSM_RPM_MAP(LVS3B, LVS3B, 1),
+	MSM_RPM_MAP(MVS, MVS, 1),
+
+	MSM_RPM_MAP(SMPS0_0, SMPS0, 2),
+	MSM_RPM_MAP(SMPS1_0, SMPS1, 2),
+	MSM_RPM_MAP(SMPS2_0, SMPS2, 2),
+	MSM_RPM_MAP(SMPS3_0, SMPS3, 2),
+	MSM_RPM_MAP(SMPS4_0, SMPS4, 2),
+	MSM_RPM_MAP(LDO0_0, LDO0, 2),
+	MSM_RPM_MAP(LDO1_0, LDO1, 2),
+	MSM_RPM_MAP(LDO2_0, LDO2, 2),
+	MSM_RPM_MAP(LDO3_0, LDO3, 2),
+	MSM_RPM_MAP(LDO4_0, LDO4, 2),
+	MSM_RPM_MAP(LDO5_0, LDO5, 2),
+	MSM_RPM_MAP(LDO6_0, LDO6, 2),
+	MSM_RPM_MAP(LDO7_0, LDO7, 2),
+	MSM_RPM_MAP(LDO8_0, LDO8, 2),
+	MSM_RPM_MAP(LDO9_0, LDO9, 2),
+	MSM_RPM_MAP(LDO10_0, LDO10, 2),
+	MSM_RPM_MAP(LDO11_0, LDO11, 2),
+	MSM_RPM_MAP(LDO12_0, LDO12, 2),
+	MSM_RPM_MAP(LDO13_0, LDO13, 2),
+	MSM_RPM_MAP(LDO14_0, LDO14, 2),
+	MSM_RPM_MAP(LDO15_0, LDO15, 2),
+	MSM_RPM_MAP(LDO16_0, LDO16, 2),
+	MSM_RPM_MAP(LDO17_0, LDO17, 2),
+	MSM_RPM_MAP(LDO18_0, LDO18, 2),
+	MSM_RPM_MAP(LDO19_0, LDO19, 2),
+	MSM_RPM_MAP(LDO20_0, LDO20, 2),
+	MSM_RPM_MAP(LDO21_0, LDO21, 2),
+	MSM_RPM_MAP(LDO22_0, LDO22, 2),
+	MSM_RPM_MAP(LDO23_0, LDO23, 2),
+	MSM_RPM_MAP(LDO24_0, LDO24, 2),
+	MSM_RPM_MAP(LDO25_0, LDO25, 2),
+	MSM_RPM_MAP(LVS0, LVS0, 1),
+	MSM_RPM_MAP(LVS1, LVS1, 1),
+	MSM_RPM_MAP(NCP_0, NCP, 2),
+
+	MSM_RPM_MAP(CXO_BUFFERS, CXO_BUFFERS, 1),
+};
 
 static struct msm_rpm_platform_data *msm_rpm_platform;
 static uint32_t msm_rpm_map[MSM_RPM_ID_LAST + 1];
@@ -65,19 +192,20 @@ static struct msm_rpm_request msm_rpm_request_poll_mode;
 static LIST_HEAD(msm_rpm_notifications);
 static struct msm_rpm_notif_config msm_rpm_notif_cfgs[MSM_RPM_CTX_SET_COUNT];
 static bool msm_rpm_init_notif_done;
+
 /******************************************************************************
  * Internal functions
  *****************************************************************************/
 
 static inline uint32_t msm_rpm_read(unsigned int page, unsigned int reg)
 {
-	return __raw_readl(msm_rpm_platform->reg_base_addrs[page] + reg * 4);
+	return readl(msm_rpm_platform->reg_base_addrs[page] + reg * 4);
 }
 
 static inline void msm_rpm_write(
 	unsigned int page, unsigned int reg, uint32_t value)
 {
-	__raw_writel(value, msm_rpm_platform->reg_base_addrs[page] + reg * 4);
+	writel(value, msm_rpm_platform->reg_base_addrs[page] + reg * 4);
 }
 
 static inline void msm_rpm_read_contiguous(
@@ -138,10 +266,24 @@ static int msm_rpm_fill_sel_masks(
 	return 0;
 }
 
+static void __init msm_rpm_populate_map(void)
+{
+	int i, k;
+
+	for (i = 0; i < ARRAY_SIZE(msm_rpm_map); i++)
+		msm_rpm_map[i] = MSM_RPM_SEL_LAST + 1;
+
+	for (i = 0; i < ARRAY_SIZE(msm_rpm_raw_map); i++) {
+		struct msm_rpm_map_data *raw_data = &msm_rpm_raw_map[i];
+
+		for (k = 0; k < raw_data->count; k++)
+			msm_rpm_map[raw_data->id + k] = raw_data->sel;
+	}
+}
+
 static inline void msm_rpm_send_req_interrupt(void)
 {
-	__raw_writel(msm_rpm_platform->msm_apps_ipc_rpm_val,
-			msm_rpm_platform->msm_apps_ipc_rpm_reg);
+	writel(APPS_IPC_RPM, APPS_IPC);
 }
 
 /*
@@ -175,8 +317,6 @@ static int msm_rpm_process_ack_interrupt(void)
 		msm_rpm_write_contiguous_zeros(MSM_RPM_PAGE_CTRL,
 			MSM_RPM_CTRL_ACK_SEL_0, MSM_RPM_SEL_MASK_SIZE);
 		msm_rpm_write(MSM_RPM_PAGE_CTRL, MSM_RPM_CTRL_ACK_CTX_0, 0);
-		/* Ensure the write is complete before return */
-		mb();
 
 		return 1;
 	}
@@ -196,8 +336,6 @@ static int msm_rpm_process_ack_interrupt(void)
 		msm_rpm_write_contiguous_zeros(MSM_RPM_PAGE_CTRL,
 			MSM_RPM_CTRL_ACK_SEL_0, MSM_RPM_SEL_MASK_SIZE);
 		msm_rpm_write(MSM_RPM_PAGE_CTRL, MSM_RPM_CTRL_ACK_CTX_0, 0);
-		/* Ensure the write is complete before return */
-		mb();
 
 		if (msm_rpm_request->done)
 			complete_all(msm_rpm_request->done);
@@ -227,23 +365,13 @@ static irqreturn_t msm_rpm_ack_interrupt(int irq, void *dev_id)
 /*
  * Note: assumes caller has acquired <msm_rpm_irq_lock>.
  */
-static void msm_rpm_busy_wait_for_request_completion(
-	bool allow_async_completion)
+static void msm_rpm_busy_wait_for_request_completion(void)
 {
 	int rc;
 
 	do {
-		while (!gic_is_spi_pending(msm_rpm_platform->irq_ack) &&
-				msm_rpm_request) {
-			if (allow_async_completion)
-				spin_unlock(&msm_rpm_irq_lock);
+		while (!gic_is_spi_pending(msm_rpm_platform->irq_ack))
 			udelay(1);
-			if (allow_async_completion)
-				spin_lock(&msm_rpm_irq_lock);
-		}
-
-		if (!msm_rpm_request)
-			break;
 
 		rc = msm_rpm_process_ack_interrupt();
 		gic_clear_spi_pending(msm_rpm_platform->irq_ack);
@@ -264,7 +392,7 @@ static int msm_rpm_set_exclusive(int ctx,
 	DECLARE_COMPLETION_ONSTACK(ack);
 	unsigned long flags;
 	uint32_t ctx_mask = msm_rpm_get_ctx_mask(ctx);
-	uint32_t ctx_mask_ack = 0;
+	uint32_t ctx_mask_ack;
 	uint32_t sel_masks_ack[MSM_RPM_SEL_MASK_SIZE];
 	int i;
 
@@ -274,9 +402,7 @@ static int msm_rpm_set_exclusive(int ctx,
 	msm_rpm_request_irq_mode.sel_masks_ack = sel_masks_ack;
 	msm_rpm_request_irq_mode.done = &ack;
 
-	spin_lock_irqsave(&msm_rpm_lock, flags);
-	spin_lock(&msm_rpm_irq_lock);
-
+	spin_lock_irqsave(&msm_rpm_irq_lock, flags);
 	BUG_ON(msm_rpm_request);
 	msm_rpm_request = &msm_rpm_request_irq_mode;
 
@@ -289,13 +415,8 @@ static int msm_rpm_set_exclusive(int ctx,
 		MSM_RPM_CTRL_REQ_SEL_0, sel_masks, MSM_RPM_SEL_MASK_SIZE);
 	msm_rpm_write(MSM_RPM_PAGE_CTRL, MSM_RPM_CTRL_REQ_CTX_0, ctx_mask);
 
-	/* Ensure RPM data is written before sending the interrupt */
-	mb();
 	msm_rpm_send_req_interrupt();
-
-	spin_unlock(&msm_rpm_irq_lock);
-	spin_unlock_irqrestore(&msm_rpm_lock, flags);
-
+	spin_unlock_irqrestore(&msm_rpm_irq_lock, flags);
 	wait_for_completion(&ack);
 
 	BUG_ON((ctx_mask_ack & ~(msm_rpm_get_ctx_mask(MSM_RPM_CTX_REJECTED)))
@@ -320,9 +441,8 @@ static int msm_rpm_set_exclusive_noirq(int ctx,
 	unsigned int irq = msm_rpm_platform->irq_ack;
 	unsigned long flags;
 	uint32_t ctx_mask = msm_rpm_get_ctx_mask(ctx);
-	uint32_t ctx_mask_ack = 0;
+	uint32_t ctx_mask_ack;
 	uint32_t sel_masks_ack[MSM_RPM_SEL_MASK_SIZE];
-	struct irq_chip *irq_chip = NULL;
 	int i;
 
 	msm_rpm_request_poll_mode.req = req;
@@ -331,16 +451,10 @@ static int msm_rpm_set_exclusive_noirq(int ctx,
 	msm_rpm_request_poll_mode.sel_masks_ack = sel_masks_ack;
 	msm_rpm_request_poll_mode.done = NULL;
 
+	get_irq_chip(irq)->mask(irq);
 	spin_lock_irqsave(&msm_rpm_irq_lock, flags);
-	irq_chip = irq_get_chip(irq);
-	if (!irq_chip) {
-		spin_unlock_irqrestore(&msm_rpm_irq_lock, flags);
-		return -ENOSPC;
-	}
-	irq_chip->irq_mask(irq_get_irq_data(irq));
-
 	if (msm_rpm_request) {
-		msm_rpm_busy_wait_for_request_completion(true);
+		msm_rpm_busy_wait_for_request_completion();
 		BUG_ON(msm_rpm_request);
 	}
 
@@ -355,15 +469,12 @@ static int msm_rpm_set_exclusive_noirq(int ctx,
 		MSM_RPM_CTRL_REQ_SEL_0, sel_masks, MSM_RPM_SEL_MASK_SIZE);
 	msm_rpm_write(MSM_RPM_PAGE_CTRL, MSM_RPM_CTRL_REQ_CTX_0, ctx_mask);
 
-	/* Ensure RPM data is written before sending the interrupt */
-	mb();
 	msm_rpm_send_req_interrupt();
+	msm_rpm_busy_wait_for_request_completion();
 
-	msm_rpm_busy_wait_for_request_completion(false);
 	BUG_ON(msm_rpm_request);
-
-	irq_chip->irq_unmask(irq_get_irq_data(irq));
 	spin_unlock_irqrestore(&msm_rpm_irq_lock, flags);
+	get_irq_chip(irq)->unmask(irq);
 
 	BUG_ON((ctx_mask_ack & ~(msm_rpm_get_ctx_mask(MSM_RPM_CTX_REJECTED)))
 		!= ctx_mask);
@@ -377,22 +488,15 @@ static int msm_rpm_set_exclusive_noirq(int ctx,
  *
  * Return value:
  *   0: success
+ *   -EINTR: interrupted
  *   -EINVAL: invalid <ctx> or invalid id in <req> array
  *   -ENOSPC: request rejected
- *   -ENODEV: RPM driver not initialized
  */
 static int msm_rpm_set_common(
 	int ctx, struct msm_rpm_iv_pair *req, int count, bool noirq)
 {
 	uint32_t sel_masks[MSM_RPM_SEL_MASK_SIZE] = {};
 	int rc;
-
-	if (!msm_rpm_platform) {
-		if (cpu_is_apq8064())
-			return 0;
-		else
-			return -ENODEV;
-	}
 
 	if (ctx >= MSM_RPM_CTX_SET_COUNT) {
 		rc = -EINVAL;
@@ -404,13 +508,14 @@ static int msm_rpm_set_common(
 		goto set_common_exit;
 
 	if (noirq) {
-		unsigned long flags;
-
-		spin_lock_irqsave(&msm_rpm_lock, flags);
+		spin_lock(&msm_rpm_lock);
 		rc = msm_rpm_set_exclusive_noirq(ctx, sel_masks, req, count);
-		spin_unlock_irqrestore(&msm_rpm_lock, flags);
+		spin_unlock(&msm_rpm_lock);
 	} else {
-		mutex_lock(&msm_rpm_mutex);
+		rc = mutex_lock_interruptible(&msm_rpm_mutex);
+		if (rc)
+			goto set_common_exit;
+
 		rc = msm_rpm_set_exclusive(ctx, sel_masks, req, count);
 		mutex_unlock(&msm_rpm_mutex);
 	}
@@ -422,8 +527,8 @@ set_common_exit:
 /*
  * Return value:
  *   0: success
+ *   -EINTR: interrupted
  *   -EINVAL: invalid <ctx> or invalid id in <req> array
- *   -ENODEV: RPM driver not initialized.
  */
 static int msm_rpm_clear_common(
 	int ctx, struct msm_rpm_iv_pair *req, int count, bool noirq)
@@ -432,13 +537,6 @@ static int msm_rpm_clear_common(
 	struct msm_rpm_iv_pair r[MSM_RPM_SEL_MASK_SIZE];
 	int rc;
 	int i;
-
-	if (!msm_rpm_platform) {
-		if (cpu_is_apq8064())
-			return 0;
-		else
-			return -ENODEV;
-	}
 
 	if (ctx >= MSM_RPM_CTX_SET_COUNT) {
 		rc = -EINVAL;
@@ -459,15 +557,16 @@ static int msm_rpm_clear_common(
 		msm_rpm_get_sel_mask(MSM_RPM_SEL_INVALIDATE);
 
 	if (noirq) {
-		unsigned long flags;
-
-		spin_lock_irqsave(&msm_rpm_lock, flags);
+		spin_lock(&msm_rpm_lock);
 		rc = msm_rpm_set_exclusive_noirq(ctx, sel_masks, r,
 			ARRAY_SIZE(r));
-		spin_unlock_irqrestore(&msm_rpm_lock, flags);
+		spin_unlock(&msm_rpm_lock);
 		BUG_ON(rc);
 	} else {
-		mutex_lock(&msm_rpm_mutex);
+		rc = mutex_lock_interruptible(&msm_rpm_mutex);
+		if (rc)
+			goto clear_common_exit;
+
 		rc = msm_rpm_set_exclusive(ctx, sel_masks, r, ARRAY_SIZE(r));
 		mutex_unlock(&msm_rpm_mutex);
 		BUG_ON(rc);
@@ -533,21 +632,14 @@ static void msm_rpm_initialize_notification(void)
 int msm_rpm_local_request_is_outstanding(void)
 {
 	unsigned long flags;
-	int outstanding = 0;
+	int outstanding;
 
-	if (!spin_trylock_irqsave(&msm_rpm_lock, flags))
-		goto local_request_is_outstanding_exit;
-
-	if (!spin_trylock(&msm_rpm_irq_lock))
-		goto local_request_is_outstanding_unlock;
+	if (spin_trylock_irqsave(&msm_rpm_irq_lock, flags))
+		return 0;
 
 	outstanding = (msm_rpm_request != NULL);
-	spin_unlock(&msm_rpm_irq_lock);
+	spin_unlock_irqrestore(&msm_rpm_irq_lock, flags);
 
-local_request_is_outstanding_unlock:
-	spin_unlock_irqrestore(&msm_rpm_lock, flags);
-
-local_request_is_outstanding_exit:
 	return outstanding;
 }
 
@@ -564,7 +656,6 @@ local_request_is_outstanding_exit:
  *   -EBUSY: RPM is updating the status page; values across different registers
  *           may not be consistent
  *   -EINVAL: invalid id in <status> array
- *   -ENODEV: RPM driver not initialized
  */
 int msm_rpm_get_status(struct msm_rpm_iv_pair *status, int count)
 {
@@ -572,13 +663,6 @@ int msm_rpm_get_status(struct msm_rpm_iv_pair *status, int count)
 	uint32_t seq_end;
 	int rc;
 	int i;
-
-	if (!msm_rpm_platform) {
-		if (cpu_is_apq8064())
-			return 0;
-		else
-			return -ENODEV;
-	}
 
 	seq_begin = msm_rpm_read(MSM_RPM_PAGE_STATUS,
 				MSM_RPM_STATUS_ID_SEQUENCE);
@@ -622,9 +706,9 @@ EXPORT_SYMBOL(msm_rpm_get_status);
  *
  * Return value:
  *   0: success
+ *   -EINTR: interrupted
  *   -EINVAL: invalid <ctx> or invalid id in <req> array
  *   -ENOSPC: request rejected
- *   -ENODEV: RPM driver not initialized
  */
 int msm_rpm_set(int ctx, struct msm_rpm_iv_pair *req, int count)
 {
@@ -641,9 +725,6 @@ EXPORT_SYMBOL(msm_rpm_set);
  */
 int msm_rpm_set_noirq(int ctx, struct msm_rpm_iv_pair *req, int count)
 {
-	WARN(!irqs_disabled(), "msm_rpm_set_noirq can only be called "
-		"safely when local irqs are disabled.  Consider using "
-		"msm_rpm_set or msm_rpm_set_nosleep instead.");
 	return msm_rpm_set_common(ctx, req, count, true);
 }
 EXPORT_SYMBOL(msm_rpm_set_noirq);
@@ -662,6 +743,7 @@ EXPORT_SYMBOL(msm_rpm_set_noirq);
  *
  * Return value:
  *   0: success
+ *   -EINTR: interrupted
  *   -EINVAL: invalid <ctx> or invalid id in <req> array
  */
 int msm_rpm_clear(int ctx, struct msm_rpm_iv_pair *req, int count)
@@ -679,9 +761,6 @@ EXPORT_SYMBOL(msm_rpm_clear);
  */
 int msm_rpm_clear_noirq(int ctx, struct msm_rpm_iv_pair *req, int count)
 {
-	WARN(!irqs_disabled(), "msm_rpm_clear_noirq can only be called "
-		"safely when local irqs are disabled.  Consider using "
-		"msm_rpm_clear or msm_rpm_clear_nosleep instead.");
 	return msm_rpm_clear_common(ctx, req, count, true);
 }
 EXPORT_SYMBOL(msm_rpm_clear_noirq);
@@ -706,8 +785,8 @@ EXPORT_SYMBOL(msm_rpm_clear_noirq);
  *
  * Return value:
  *   0: success
+ *   -EINTR: interrupted
  *   -EINVAL: invalid id in <req> array
- *   -ENODEV: RPM driver not initialized
  */
 int msm_rpm_register_notification(struct msm_rpm_notification *n,
 	struct msm_rpm_iv_pair *req, int count)
@@ -718,19 +797,14 @@ int msm_rpm_register_notification(struct msm_rpm_notification *n,
 	int rc;
 	int i;
 
-	if (!msm_rpm_platform) {
-		if (cpu_is_apq8064())
-			return 0;
-		else
-			return -ENODEV;
-	}
-
 	INIT_LIST_HEAD(&n->list);
 	rc = msm_rpm_fill_sel_masks(n->sel_masks, req, count);
 	if (rc)
 		goto register_notification_exit;
 
-	mutex_lock(&msm_rpm_mutex);
+	rc = mutex_lock_interruptible(&msm_rpm_mutex);
+	if (rc)
+		goto register_notification_exit;
 
 	if (!msm_rpm_init_notif_done) {
 		msm_rpm_initialize_notification();
@@ -764,24 +838,19 @@ EXPORT_SYMBOL(msm_rpm_register_notification);
  *
  * Return value:
  *   0: success
- *   -ENODEV: RPM driver not initialized
+ *   -EINTR: interrupted
  */
 int msm_rpm_unregister_notification(struct msm_rpm_notification *n)
 {
 	unsigned long flags;
 	unsigned int ctx;
 	struct msm_rpm_notif_config cfg;
-	int rc = 0;
+	int rc;
 	int i;
 
-	if (!msm_rpm_platform) {
-		if (cpu_is_apq8064())
-			return 0;
-		else
-			return -ENODEV;
-	}
-
-	mutex_lock(&msm_rpm_mutex);
+	rc = mutex_lock_interruptible(&msm_rpm_mutex);
+	if (rc)
+		goto unregister_notification_exit;
 
 	ctx = MSM_RPM_CTX_SET_0;
 	cfg = msm_rpm_notif_cfgs[ctx];
@@ -799,127 +868,28 @@ int msm_rpm_unregister_notification(struct msm_rpm_notification *n)
 	msm_rpm_update_notification(ctx, &msm_rpm_notif_cfgs[ctx], &cfg);
 	mutex_unlock(&msm_rpm_mutex);
 
+unregister_notification_exit:
 	return rc;
 }
 EXPORT_SYMBOL(msm_rpm_unregister_notification);
 
-static uint32_t fw_major, fw_minor, fw_build;
-
-static ssize_t driver_version_show(struct kobject *kobj,
-		struct kobj_attribute *attr, char *buf)
-{
-	return snprintf(buf, PAGE_SIZE, "%u.%u.%u\n",
-			RPM_MAJOR_VER, RPM_MINOR_VER, RPM_BUILD_VER);
-}
-
-static ssize_t fw_version_show(struct kobject *kobj,
-		struct kobj_attribute *attr, char *buf)
-{
-	return snprintf(buf, PAGE_SIZE, "%u.%u.%u\n",
-			fw_major, fw_minor, fw_build);
-}
-
-static struct kobj_attribute driver_version_attr = __ATTR_RO(driver_version);
-static struct kobj_attribute fw_version_attr = __ATTR_RO(fw_version);
-
-static struct attribute *driver_attributes[] = {
-	&driver_version_attr.attr,
-	&fw_version_attr.attr,
-	NULL
-};
-
-static struct attribute_group driver_attr_group = {
-	.attrs = driver_attributes,
-};
-
-static int __devinit msm_rpm_probe(struct platform_device *pdev)
-{
-	return sysfs_create_group(&pdev->dev.kobj, &driver_attr_group);
-}
-
-static int __devexit msm_rpm_remove(struct platform_device *pdev)
-{
-	sysfs_remove_group(&pdev->dev.kobj, &driver_attr_group);
-	return 0;
-}
-
-static struct platform_driver msm_rpm_platform_driver = {
-	.probe = msm_rpm_probe,
-	.remove = __devexit_p(msm_rpm_remove),
-	.driver = {
-		.name = "msm_rpm",
-		.owner = THIS_MODULE,
-	},
-};
-
-static void __init msm_rpm_populate_map(void)
-{
-	int i, k;
-
-	for (i = 0; i < ARRAY_SIZE(msm_rpm_map); i++)
-		msm_rpm_map[i] = MSM_RPM_SEL_LAST + 1;
-
-	for (i = 0; i < rpm_map_data_size; i++) {
-		struct msm_rpm_map_data *raw_data = &rpm_map_data[i];
-
-		for (k = 0; k < raw_data->count; k++)
-			msm_rpm_map[raw_data->id + k] = raw_data->sel;
-	}
-}
-
 int __init msm_rpm_init(struct msm_rpm_platform_data *data)
 {
-	unsigned int irq;
 	int rc;
-
-	if (cpu_is_apq8064())
-		return 0;
 
 	msm_rpm_platform = data;
 
-	fw_major = msm_rpm_read(MSM_RPM_PAGE_STATUS,
-					MSM_RPM_STATUS_ID_VERSION_MAJOR);
-	fw_minor = msm_rpm_read(MSM_RPM_PAGE_STATUS,
-					MSM_RPM_STATUS_ID_VERSION_MINOR);
-	fw_build = msm_rpm_read(MSM_RPM_PAGE_STATUS,
-					MSM_RPM_STATUS_ID_VERSION_BUILD);
-	pr_info("%s: RPM firmware %u.%u.%u\n", __func__,
-			fw_major, fw_minor, fw_build);
+	msm_rpm_write(MSM_RPM_PAGE_CTRL, MSM_RPM_CTRL_VERSION_MAJOR, 2);
+	msm_rpm_write(MSM_RPM_PAGE_CTRL, MSM_RPM_CTRL_VERSION_MINOR, 0);
+	msm_rpm_write(MSM_RPM_PAGE_CTRL, MSM_RPM_CTRL_VERSION_BUILD, 0);
 
-	if (fw_major != RPM_MAJOR_VER) {
-		pr_err("%s: RPM version %u.%u.%u incompatible with "
-				"this driver version %u.%u.%u\n", __func__,
-				fw_major, fw_minor, fw_build,
-				RPM_MAJOR_VER, RPM_MINOR_VER, RPM_BUILD_VER);
-		return -EFAULT;
-	}
-
-	msm_rpm_write(MSM_RPM_PAGE_CTRL, MSM_RPM_CTRL_VERSION_MAJOR,
-			RPM_MAJOR_VER);
-	msm_rpm_write(MSM_RPM_PAGE_CTRL, MSM_RPM_CTRL_VERSION_MINOR,
-			RPM_MINOR_VER);
-	msm_rpm_write(MSM_RPM_PAGE_CTRL, MSM_RPM_CTRL_VERSION_BUILD,
-			RPM_BUILD_VER);
-
-	irq = msm_rpm_platform->irq_ack;
-
-	rc = request_irq(irq, msm_rpm_ack_interrupt,
-			IRQF_TRIGGER_RISING | IRQF_NO_SUSPEND,
-			"rpm_drv", msm_rpm_ack_interrupt);
-	if (rc) {
+	rc = request_irq(msm_rpm_platform->irq_ack, msm_rpm_ack_interrupt,
+			IRQF_TRIGGER_RISING, "rpm_drv", msm_rpm_ack_interrupt);
+	if (rc)
 		pr_err("%s: failed to request irq %d: %d\n",
-			__func__, irq, rc);
-		return rc;
-	}
-
-	rc = irq_set_irq_wake(irq, 1);
-	if (rc) {
-		pr_err("%s: failed to set wakeup irq %u: %d\n",
-			__func__, irq, rc);
-		return rc;
-	}
+			__func__, msm_rpm_platform->irq_ack, rc);
 
 	msm_rpm_populate_map();
 
-	return platform_driver_register(&msm_rpm_platform_driver);
+	return rc;
 }

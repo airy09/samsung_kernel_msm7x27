@@ -1,13 +1,29 @@
 /* Copyright (c) 2008-2009, Code Aurora Forum. All rights reserved.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *     * Redistributions of source code must retain the above copyright
+ *       notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above
+ *       copyright notice, this list of conditions and the following
+ *       disclaimer in the documentation and/or other materials provided
+ *       with the distribution.
+ *     * Neither the name of Code Aurora Forum, Inc. nor the names of its
+ *       contributors may be used to endorse or promote products derived
+ *       from this software without specific prior written permission.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+ * BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+ * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
+ * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
@@ -130,11 +146,8 @@ typedef struct {
 } mddi_lcd_func_type;
 
 extern mddi_lcd_func_type mddi_lcd;
-extern int irq_enabled;
-extern unsigned char mddi_timer_shutdown_flag;
-extern struct mutex mddi_timer_lock;
-
 void mddi_init(void);
+
 void mddi_powerdown(void);
 
 void mddi_host_start_ext_display(void);
@@ -187,16 +200,6 @@ void mddi_queue_static_window_adjust
     (const mddi_reg_write_type *reg_write,
      uint16 num_writes, mddi_llist_done_cb_type done_cb);
 
-#ifdef ENABLE_MDDI_MULTI_READ_WRITE
-int mddi_host_register_multiwrite(uint32 reg_addr,
-	uint32 *value_list_ptr, uint32 value_count,
-    boolean wait, mddi_llist_done_cb_type done_cb,
-	mddi_host_type host);
-int mddi_host_register_multiread(uint32 reg_addr,
-	uint32 *value_list_ptr, uint32 value_count,
-	boolean wait, mddi_host_type host);
-#endif
-
 #define mddi_queue_register_read(reg, val_ptr, wait, sig) \
 	mddi_host_register_read(reg, val_ptr, wait, MDDI_HOST_PRIM)
 #define mddi_queue_register_write(reg, val, wait, sig) \
@@ -221,11 +224,8 @@ void mddi_assign_max_pkt_dimensions(uint16 image_cols,
 uint16 mddi_assign_pkt_height(uint16 pkt_width, uint16 pkt_height, uint16 bpp);
 #endif
 void mddi_queue_reverse_encapsulation(boolean wait);
-int mddi_client_power(unsigned int client_id);
 void mddi_disable(int lock);
 void mddi_window_adjust(struct msm_fb_data_type *mfd,
 	uint16 x1, uint16 x2, uint16 y1, uint16 y2);
-void mddi_send_fw_link_skew_cal(mddi_host_type host_idx);
-int pmdh_clk_func(int enable);
 
 #endif /* MDDIHOST_H */

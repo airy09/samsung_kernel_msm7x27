@@ -1,13 +1,29 @@
-/* Copyright (c) 2010-2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *     * Redistributions of source code must retain the above copyright
+ *       notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above
+ *       copyright notice, this list of conditions and the following
+ *       disclaimer in the documentation and/or other materials provided
+ *       with the distribution.
+ *     * Neither the name of Code Aurora Forum, Inc. nor the names of its
+ *       contributors may be used to endorse or promote products derived
+ *       from this software without specific prior written permission.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+ * BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+ * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
+ * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 #ifndef VIDC_H
@@ -1974,7 +1990,7 @@ do { \
 	(VIDC_720P_WRAPPER_REG_BASE      + 0x00000ebc)
 #define VIDC_REG_441270_PHYS                    \
 	(VIDC_720P_WRAPPER_REG_BASE_PHYS + 0x00000ebc)
-#define VIDC_REG_441270_RMSK                          0x1f
+#define VIDC_REG_441270_RMSK                           0xf
 #define VIDC_REG_441270_SHFT                             0
 #define VIDC_REG_441270_IN                      \
 	in_dword_masked(VIDC_REG_441270_ADDR,  \
@@ -1984,7 +2000,7 @@ do { \
 #define VIDC_REG_441270_DATA_PARTITIONED_BMSK 0x8
 #define VIDC_REG_441270_DATA_PARTITIONED_SHFT 0x3
 
-#define VIDC_REG_441270_FRAME_TYPE_BMSK               0x17
+#define VIDC_REG_441270_FRAME_TYPE_BMSK                0x7
 #define VIDC_REG_441270_FRAME_TYPE_SHFT                  0
 
 #define VIDC_REG_724381_ADDR        \
@@ -2177,7 +2193,6 @@ VIDC_REG_1137_METADATA_DISPLAY_INDEX_SHFT          0
 #define VIDC_720P_PROFILE_H264_BASELINE 0
 #define VIDC_720P_PROFILE_H264_MAIN     1
 #define VIDC_720P_PROFILE_H264_HIGH     2
-#define VIDC_720P_PROFILE_H264_CPB      3
 #define VIDC_720P_PROFILE_H263_BASELINE 0
 
 #define VIDC_720P_PROFILE_VC1_SP        0
@@ -2284,8 +2299,7 @@ enum vidc_720p_frame {
 	VIDC_720P_NOTCODED = 0,
 	VIDC_720P_IFRAME = 1,
 	VIDC_720P_PFRAME = 2,
-	VIDC_720P_BFRAME = 3,
-	VIDC_720P_IDRFRAME = 4
+	VIDC_720P_BFRAME = 3
 };
 
 enum vidc_720p_entropy_sel {
@@ -2316,7 +2330,7 @@ enum vidc_720p_display_status {
 	VIDC_720P_DECODE_ONLY = 0,
 	VIDC_720P_DECODE_AND_DISPLAY = 1,
 	VIDC_720P_DISPLAY_ONLY = 2,
-	VIDC_720P_EMPTY_BUFFER = 3
+  VIDC_720P_EMPTY_BUFFER = 3
 };
 
 #define VIDC_720P_ENC_IFRAME_REQ       0x1
@@ -2492,8 +2506,7 @@ void vidc_720p_enc_frame_info
 
 void vidc_720p_decode_bitstream_header(u32 ch_id, u32 dec_unit_size,
 	u32 start_byte_num, u32 ext_buffer_start, u32 ext_buffer_end,
-	enum vidc_720p_memory_access_method memory_access_model,
-	u32 decode_order);
+	enum vidc_720p_memory_access_method memory_access_model);
 
 void vidc_720p_decode_get_seq_hdr_info
     (struct vidc_720p_seq_hdr_info *seq_hdr_info);

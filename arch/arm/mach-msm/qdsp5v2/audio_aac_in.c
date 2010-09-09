@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2008 Google, Inc.
  * Copyright (C) 2008 HTC Corporation
- * Copyright (c) 2009-2011, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2009-2010, Code Aurora Forum. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -16,8 +16,6 @@
  *
  */
 
-#include <asm/atomic.h>
-#include <asm/ioctls.h>
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/miscdevice.h>
@@ -27,19 +25,16 @@
 #include <linux/dma-mapping.h>
 #include <linux/msm_audio_aac.h>
 #include <linux/android_pmem.h>
-#include <linux/memory_alloc.h>
-#include <mach/msm_memtypes.h>
+
+#include <asm/atomic.h>
+#include <asm/ioctls.h>
 
 #include <mach/msm_adsp.h>
-#include <mach/iommu.h>
-#include <mach/msm_subsystem_map.h>
-#include <mach/iommu_domains.h>
 #include <mach/qdsp5v2/qdsp5audreccmdi.h>
 #include <mach/qdsp5v2/qdsp5audrecmsg.h>
 #include <mach/qdsp5v2/audpreproc.h>
 #include <mach/qdsp5v2/audio_dev_ctl.h>
 #include <mach/debug_mm.h>
-#include <mach/socinfo.h>
 
 /* FRAME_NUM must be a power of two */
 #define FRAME_NUM		(8)
@@ -97,9 +92,6 @@ struct audio_in {
 	wait_queue_head_t write_wait;
 	int32_t out_phys; /* physical address of write buffer */
 	char *out_data;
-	struct msm_mapped_buffer *map_v_read;
-	struct msm_mapped_buffer *map_v_write;
-
 	int mfield; /* meta field embedded in data */
 	int wflush; /*write flush */
 	int rflush; /*read flush*/
@@ -121,13 +113,11 @@ struct audio_in {
 	uint32_t in_count; /* number of buffers available to read() */
 	uint32_t mode;
 	uint32_t eos_ack;
-	uint32_t flush_ack;
 
 	const char *module_name;
 	unsigned queue_ids;
 	uint16_t enc_id;
 
-	struct audrec_session_info session_info; /*audrec session info*/
 	uint16_t source; /* Encoding source bit mask */
 	uint32_t device_events; /* device events interested in */
 	uint32_t dev_cnt;
@@ -142,7 +132,6 @@ struct audio_in {
 	int running;
 	int stopped; /* set when stopped, cleared on flush */
 	int abort; /* set when error, like sample rate mismatch */
-	char *build_id;
 };
 
 struct audio_frame {
@@ -219,8 +208,7 @@ static void aac_in_listener(u32 evt_id, union auddev_evt_data *evt_payload,
 		audio->source |= (0x1 << evt_payload->routing_id);
 		spin_unlock_irqrestore(&audio->dev_lock, flags);
 
-		if ((audio->running == 1) && (audio->enabled == 1) &&
-			(audio->mode == MSM_AUD_ENC_MODE_TUNNEL))
+		if ((audio->running == 1) && (audio->enabled == 1))
 			audaac_in_record_config(audio, 1);
 
 		break;
@@ -235,14 +223,13 @@ static void aac_in_listener(u32 evt_id, union auddev_evt_data *evt_payload,
 		if ((!audio->running) || (!audio->enabled))
 			break;
 
-		if (audio->mode == MSM_AUD_ENC_MODE_TUNNEL) {
-			/* Turn of as per source */
-			if (audio->source)
-				audaac_in_record_config(audio, 1);
-			else
+		/* Turn of as per source */
+		if (audio->source)
+			audaac_in_record_config(audio, 1);
+		else
 			/* Turn off all */
-				audaac_in_record_config(audio, 0);
-		}
+			audaac_in_record_config(audio, 0);
+
 		break;
 	}
 	case AUDDEV_EVT_FREQ_CHG: {
@@ -255,8 +242,7 @@ static void aac_in_listener(u32 evt_id, union auddev_evt_data *evt_payload,
 			   with device sample rate */
 			if (evt_payload->freq_info.sample_rate !=
 				audio->samp_rate) {
-				if (audio->mode == MSM_AUD_ENC_MODE_TUNNEL)
-					audaac_in_record_config(audio, 0);
+				audaac_in_record_config(audio, 0);
 				audio->abort = 1;
 				wake_up(&audio->wait);
 			}
@@ -317,10 +303,7 @@ static void audpreproc_dsp_event(void *data, unsigned id,  void *msg)
 			}
 		} else { /* Encoder disable success */
 			audio->running = 0;
-			if (audio->mode == MSM_AUD_ENC_MODE_TUNNEL)
-				audaac_in_record_config(audio, 0);
-			else
-				wake_up(&audio->wait_enable);
+			audaac_in_record_config(audio, 0);
 		}
 		break;
 	}
@@ -344,7 +327,6 @@ static void audpreproc_dsp_event(void *data, unsigned id,  void *msg)
 	}
 	case AUDPREPROC_AFE_CMD_AUDIO_RECORD_CFG_DONE_MSG: {
 		MM_DBG("AFE_CMD_AUDIO_RECORD_CFG_DONE_MSG\n");
-		wake_up(&audio->wait_enable);
 		break;
 	}
 	default:
@@ -367,8 +349,8 @@ static void audrec_dsp_event(void *data, unsigned id, size_t len,
 				audaac_in_record_config(audio, 1);
 		} else {
 			audpreproc_pcm_send_data(audio, 1);
-			wake_up(&audio->wait_enable);
 		}
+		wake_up(&audio->wait_enable);
 		break;
 	}
 	case AUDREC_FATAL_ERR_MSG: {
@@ -399,7 +381,7 @@ static void audrec_dsp_event(void *data, unsigned id, size_t len,
 		break;
 	}
 	case AUDREC_CMD_PCM_BUFFER_PTR_UPDATE_ARM_TO_ENC_MSG: {
-		MM_DBG("ptr_update recieved from DSP\n");
+		MM_ERR("ptr_update recieved from DSP\n");
 		audpreproc_pcm_send_data(audio, 1);
 		break;
 	}
@@ -429,13 +411,8 @@ static void audrec_dsp_event(void *data, unsigned id, size_t len,
 	case AUDREC_CMD_FLUSH_DONE_MSG: {
 		audio->wflush = 0;
 		audio->rflush = 0;
-		audio->flush_ack = 1;
 		wake_up(&audio->write_wait);
 		MM_DBG("flush ack recieved\n");
-		break;
-	}
-	case ADSP_MESSAGE_ID: {
-		MM_DBG("Received ADSP event:module audrectask\n");
 		break;
 	}
 	default:
@@ -575,13 +552,7 @@ static int audaac_in_enc_config(struct audio_in *audio, int enable)
 {
 	struct audpreproc_audrec_cmd_enc_cfg cmd;
 	memset(&cmd, 0, sizeof(cmd));
-	if (audio->build_id[17] == '1') {
-		cmd.cmd_id = AUDPREPROC_AUDREC_CMD_ENC_CFG_2;
-		MM_ERR("sending AUDPREPROC_AUDREC_CMD_ENC_CFG_2 command");
-	} else {
-		cmd.cmd_id = AUDPREPROC_AUDREC_CMD_ENC_CFG;
-		MM_ERR("sending AUDPREPROC_AUDREC_CMD_ENC_CFG command");
-	}
+	cmd.cmd_id = AUDPREPROC_AUDREC_CMD_ENC_CFG;
 	cmd.stream_id = audio->enc_id;
 
 	if (enable)
@@ -806,10 +777,6 @@ static long audaac_in_ioctl(struct file *file,
 			MM_DBG("msm_snddev_withdraw_freq\n");
 			break;
 		}
-		/*update aurec session info in audpreproc layer*/
-		audio->session_info.session_id = audio->enc_id;
-		audio->session_info.sampling_freq = audio->samp_rate;
-		audpreproc_update_audrec_info(&audio->session_info);
 		rc = audaac_in_enable(audio);
 		if (!rc) {
 			rc =
@@ -822,12 +789,9 @@ static long audaac_in_ioctl(struct file *file,
 			else
 				rc = 0;
 		}
-		audio->stopped = 0;
 		break;
 	}
 	case AUDIO_STOP: {
-		audio->session_info.sampling_freq = 0;
-		audpreproc_update_audrec_info(&audio->session_info);
 		rc = audaac_in_disable(audio);
 		rc = msm_snddev_withdraw_freq(audio->enc_id,
 					SNDDEV_CAP_TX, AUDDEV_CLNT_ENC);
@@ -871,15 +835,13 @@ static long audaac_in_ioctl(struct file *file,
 		}
 		/* Allow only single frame */
 		if (audio->mode == MSM_AUD_ENC_MODE_TUNNEL) {
-			if (cfg.buffer_size != (FRAME_SIZE - 8)) {
+			if (cfg.buffer_size != (FRAME_SIZE - 8))
 				rc = -EINVAL;
 				break;
-			}
 		} else {
-			if (cfg.buffer_size != (NT_FRAME_SIZE - 24)) {
+			if (cfg.buffer_size != (NT_FRAME_SIZE - 24))
 				rc = -EINVAL;
 				break;
-			}
 		}
 		audio->buffer_size = cfg.buffer_size;
 		break;
@@ -1039,7 +1001,7 @@ static ssize_t audaac_in_read(struct file *file,
 			buf += size;
 			if ((audio->mode == MSM_AUD_ENC_MODE_NONTUNNEL) &&
 						(!audio->eos_ack)) {
-				MM_DBG("sending read ptr command %d %d\n",
+				MM_ERR("sending read ptr command %d %d\n",
 							audio->dsp_cnt,
 							audio->in_tail);
 				audaac_dsp_read_buffer(audio,
@@ -1257,12 +1219,7 @@ static ssize_t audaac_in_write(struct file *file,
 exit:
 	frame->used = count;
 	audio->out_head ^= 1;
-	if (!audio->flush_ack)
-		audpreproc_pcm_send_data(audio, 0);
-	else {
-		audpreproc_pcm_send_data(audio, 1);
-		audio->flush_ack = 0;
-	}
+	audpreproc_pcm_send_data(audio, 0);
 	if (eos_condition == AUDPREPROC_AAC_EOS_SET)
 		rc = audpreproc_aac_process_eos(audio, start, mfield_size);
 	mutex_unlock(&audio->write_lock);
@@ -1282,25 +1239,12 @@ static int audaac_in_release(struct inode *inode, struct file *file)
 	msm_snddev_withdraw_freq(audio->enc_id, SNDDEV_CAP_TX,
 					AUDDEV_CLNT_ENC);
 	auddev_unregister_evt_listner(AUDDEV_CLNT_ENC, audio->enc_id);
-	/*reset the sampling frequency information at audpreproc layer*/
-	audio->session_info.sampling_freq = 0;
-	audpreproc_update_audrec_info(&audio->session_info);
 	audaac_in_disable(audio);
 	audaac_in_flush(audio);
 	msm_adsp_put(audio->audrec);
 	audpreproc_aenc_free(audio->enc_id);
 	audio->audrec = NULL;
 	audio->opened = 0;
-	if (audio->data) {
-		msm_subsystem_unmap_buffer(audio->map_v_read);
-		free_contiguous_memory_by_paddr(audio->phys);
-		audio->data = NULL;
-	}
-	if (audio->out_data) {
-		msm_subsystem_unmap_buffer(audio->map_v_write);
-		free_contiguous_memory_by_paddr(audio->out_phys);
-		audio->out_data = NULL;
-	}
 	mutex_unlock(&audio->lock);
 	return 0;
 }
@@ -1318,25 +1262,6 @@ static int audaac_in_open(struct inode *inode, struct file *file)
 		rc = -EBUSY;
 		goto done;
 	}
-	audio->phys = allocate_contiguous_ebi_nomap(DMASZ, SZ_4K);
-	if (audio->phys) {
-		audio->map_v_read = msm_subsystem_map_buffer(
-					audio->phys, DMASZ,
-					MSM_SUBSYSTEM_MAP_KADDR, NULL, 0);
-		if (IS_ERR(audio->map_v_read)) {
-			MM_ERR("could not map DMA buffers\n");
-			rc = -ENOMEM;
-			free_contiguous_memory_by_paddr(audio->phys);
-			goto done;
-		}
-		audio->data = audio->map_v_read->vaddr;
-	} else {
-		MM_ERR("could not allocate DMA buffers\n");
-		rc = -ENOMEM;
-		goto done;
-	}
-	MM_DBG("Memory addr = 0x%8x  phy addr = 0x%8x\n",\
-		(int) audio->data, (int) audio->phys);
 	if ((file->f_mode & FMODE_WRITE) &&
 				(file->f_mode & FMODE_READ)) {
 		audio->mode = MSM_AUD_ENC_MODE_NONTUNNEL;
@@ -1387,32 +1312,27 @@ static int audaac_in_open(struct inode *inode, struct file *file)
 	audio->abort = 0;
 	audio->wflush = 0;
 	audio->rflush = 0;
-	audio->flush_ack = 0;
 
 	audaac_in_flush(audio);
 	audaac_out_flush(audio);
 
-	audio->out_phys = allocate_contiguous_ebi_nomap(BUFFER_SIZE, SZ_4K);
-	if (!audio->out_phys) {
+	audio->out_phys = pmem_kalloc(BUFFER_SIZE,
+				PMEM_MEMTYPE_EBI1 | PMEM_ALIGNMENT_4K);
+	if (IS_ERR((void *)audio->out_phys)) {
 		MM_ERR("could not allocate write buffers\n");
 		rc = -ENOMEM;
 		goto evt_error;
 	} else {
-		audio->map_v_write = msm_subsystem_map_buffer(
-					audio->out_phys, BUFFER_SIZE,
-					MSM_SUBSYSTEM_MAP_KADDR, NULL, 0);
-		if (IS_ERR(audio->map_v_write)) {
-			MM_ERR("could not map write phys address\n");
+		audio->out_data = ioremap(audio->out_phys, BUFFER_SIZE);
+		if (!audio->out_data) {
+			MM_ERR("could not allocate write buffers\n");
 			rc = -ENOMEM;
-			free_contiguous_memory_by_paddr(audio->out_phys);
+			pmem_kfree(audio->out_phys);
 			goto evt_error;
 		}
-		audio->out_data = audio->map_v_write->vaddr;
 		MM_DBG("write buf: phy addr 0x%08x kernel addr 0x%08x\n",
 				audio->out_phys, (int)audio->out_data);
 	}
-	audio->build_id = socinfo_get_build_id();
-	MM_DBG("Modem build id = %s\n", audio->build_id);
 
 		/* Initialize buffer */
 	audio->out[0].data = audio->out_data + 0;
@@ -1434,8 +1354,6 @@ static int audaac_in_open(struct inode *inode, struct file *file)
 					aac_in_listener, (void *) audio);
 	if (rc) {
 		MM_ERR("failed to register device event listener\n");
-		msm_subsystem_unmap_buffer(audio->map_v_write);
-		free_contiguous_memory_by_paddr(audio->out_phys);
 		goto evt_error;
 	}
 	audio->mfield = META_OUT_SIZE;
@@ -1471,6 +1389,15 @@ struct miscdevice audio_aac_in_misc = {
 
 static int __init audaac_in_init(void)
 {
+	the_audio_aac_in.data = dma_alloc_coherent(NULL, DMASZ,
+				       &the_audio_aac_in.phys, GFP_KERNEL);
+	MM_DBG("Memory addr = 0x%8x  Phy addr = 0x%8x ---- \n", \
+		(int) the_audio_aac_in.data, (int) the_audio_aac_in.phys);
+
+	if (!the_audio_aac_in.data) {
+		MM_ERR("Unable to allocate DMA buffer\n");
+		return -ENOMEM;
+	}
 	mutex_init(&the_audio_aac_in.lock);
 	mutex_init(&the_audio_aac_in.read_lock);
 	spin_lock_init(&the_audio_aac_in.dsp_lock);

@@ -1,4 +1,4 @@
-/* Copyright (c) 2009-2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2009, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -9,58 +9,20 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
  */
 
 #include <linux/libra_sdioif.h>
 #include <linux/delay.h>
-#include <linux/mmc/sdio.h>
-#include <linux/mmc/mmc.h>
-#include <linux/mmc/host.h>
-#include <linux/mmc/card.h>
 
 /* Libra SDIO function device */
 static struct sdio_func *libra_sdio_func;
 static struct mmc_host *libra_mmc_host;
 static int libra_mmc_host_index;
-
-/* SDIO Card ID / Device ID */
-static unsigned short  libra_sdio_card_id;
-
-static suspend_handler_t *libra_suspend_hldr;
-static resume_handler_t *libra_resume_hldr;
-static notify_card_removal_t *libra_notify_card_removal_hdlr;
-static shutdown_handler_t *libra_sdio_shutdown_hdlr;
-
-int libra_enable_sdio_irq_in_chip(struct sdio_func *func, u8 enable)
-{
-	unsigned char reg = 0;
-	int err = 0;
-
-	sdio_claim_host(func);
-
-	/* Read the value into reg */
-	libra_sdiocmd52(func, SDIO_CCCR_IENx, &reg, 0, &err);
-	if (err)
-		printk(KERN_ERR "%s: Could not read  SDIO_CCCR_IENx register "
-				"err=%d\n", __func__, err);
-
-	if (libra_mmc_host) {
-		if (enable) {
-			reg |= 1 << func->num;
-			reg |= 1;
-		} else {
-			reg &= ~(1 << func->num);
-		}
-		libra_sdiocmd52(func, SDIO_CCCR_IENx, &reg, 1, &err);
-		if (err)
-			printk(KERN_ERR "%s: Could not enable/disable irq "
-					 "err=%d\n", __func__, err);
-	 }
-	sdio_release_host(func);
-
-	return err;
-}
-EXPORT_SYMBOL(libra_enable_sdio_irq_in_chip);
 
 /**
  * libra_sdio_configure() - Function to configure the SDIO device param
@@ -90,7 +52,6 @@ int libra_sdio_configure(sdio_irq_handler_t libra_sdio_rxhandler,
 	if (sdio_set_block_size(func, blksize)) {
 		printk(KERN_ERR "%s: Unable to set the block size.\n",
 				__func__);
-		sdio_release_host(func);
 		goto cfg_error;
 	}
 
@@ -122,8 +83,6 @@ int libra_sdio_configure(sdio_irq_handler_t libra_sdio_rxhandler,
 		goto cfg_error;
 	}
 
-	libra_enable_sdio_irq_in_chip(func, 0);
-
 	sdio_release_host(func);
 
 	return 0;
@@ -134,82 +93,17 @@ cfg_error:
 }
 EXPORT_SYMBOL(libra_sdio_configure);
 
-int libra_sdio_configure_suspend_resume(
-		suspend_handler_t *libra_sdio_suspend_hdlr,
-		resume_handler_t *libra_sdio_resume_hdlr)
-{
-	libra_suspend_hldr = libra_sdio_suspend_hdlr;
-	libra_resume_hldr = libra_sdio_resume_hdlr;
-	return 0;
-}
-EXPORT_SYMBOL(libra_sdio_configure_suspend_resume);
-
 /*
  * libra_sdio_deconfigure() - Function to reset the SDIO device param
  */
 void libra_sdio_deconfigure(struct sdio_func *func)
 {
-	if (NULL == libra_sdio_func)
-		return;
-
 	sdio_claim_host(func);
 	sdio_release_irq(func);
 	sdio_disable_func(func);
 	sdio_release_host(func);
 }
 EXPORT_SYMBOL(libra_sdio_deconfigure);
-
-int libra_enable_sdio_irq(struct sdio_func *func, u8 enable)
-{
-	if (libra_mmc_host && libra_mmc_host->ops &&
-			libra_mmc_host->ops->enable_sdio_irq) {
-		libra_mmc_host->ops->enable_sdio_irq(libra_mmc_host, enable);
-		return 0;
-	}
-
-	printk(KERN_ERR "%s: Could not enable disable irq\n", __func__);
-	return -EINVAL;
-}
-EXPORT_SYMBOL(libra_enable_sdio_irq);
-
-int libra_disable_sdio_irq_capability(struct sdio_func *func, u8 disable)
-{
-	if (libra_mmc_host) {
-		if (disable)
-			libra_mmc_host->caps &= ~MMC_CAP_SDIO_IRQ;
-		else
-			libra_mmc_host->caps |= MMC_CAP_SDIO_IRQ;
-		return 0;
-	}
-	printk(KERN_ERR "%s: Could not change sdio capabilities to polling\n",
-			__func__);
-	return -EINVAL;
-}
-EXPORT_SYMBOL(libra_disable_sdio_irq_capability);
-
-/*
- * libra_sdio_release_irq() - Function to release IRQ
- */
-void libra_sdio_release_irq(struct sdio_func *func)
-{
-	if (NULL == libra_sdio_func)
-		return;
-
-	sdio_release_irq(func);
-}
-EXPORT_SYMBOL(libra_sdio_release_irq);
-
-/*
- * libra_sdio_disable_func() - Function to disable sdio func
- */
-void libra_sdio_disable_func(struct sdio_func *func)
-{
-	if (NULL == libra_sdio_func)
-		return;
-
-	sdio_disable_func(func);
-}
-EXPORT_SYMBOL(libra_sdio_disable_func);
 
 /*
  * Return the SDIO Function device
@@ -226,9 +120,6 @@ EXPORT_SYMBOL(libra_getsdio_funcdev);
 void libra_sdio_setprivdata(struct sdio_func *sdio_func_dev,
 		void *padapter)
 {
-	if (NULL == libra_sdio_func)
-		return;
-
 	sdio_set_drvdata(sdio_func_dev, padapter);
 }
 EXPORT_SYMBOL(libra_sdio_setprivdata);
@@ -248,9 +139,6 @@ EXPORT_SYMBOL(libra_sdio_getprivdata);
 void libra_claim_host(struct sdio_func *sdio_func_dev,
 		pid_t *curr_claimed, pid_t current_pid, atomic_t *claim_count)
 {
-	if (NULL == libra_sdio_func)
-		return;
-
 	if (*curr_claimed == current_pid) {
 		atomic_inc(claim_count);
 		return;
@@ -271,10 +159,6 @@ EXPORT_SYMBOL(libra_claim_host);
 void libra_release_host(struct sdio_func *sdio_func_dev,
 		pid_t *curr_claimed, pid_t current_pid, atomic_t *claim_count)
 {
-
-	if (NULL == libra_sdio_func)
-		return;
-
 	if (*curr_claimed != current_pid) {
 		/* Dont release  */
 		return;
@@ -326,21 +210,6 @@ int libra_sdio_memcpy_toio(struct sdio_func *func,
 }
 EXPORT_SYMBOL(libra_sdio_memcpy_toio);
 
-int libra_detect_card_change(void)
-{
-	if (libra_mmc_host) {
-		if (!strcmp(libra_mmc_host->class_dev.class->name, "mmc_host")
-			&& (libra_mmc_host_index == libra_mmc_host->index)) {
-			mmc_detect_change(libra_mmc_host, 0);
-			return 0;
-		}
-	}
-
-	printk(KERN_ERR "%s: Could not trigger card change\n", __func__);
-	return -EINVAL;
-}
-EXPORT_SYMBOL(libra_detect_card_change);
-
 int libra_sdio_enable_polling(void)
 {
 	if (libra_mmc_host) {
@@ -367,16 +236,6 @@ void libra_sdio_set_clock(struct sdio_func *func, unsigned int clk_freq)
 EXPORT_SYMBOL(libra_sdio_set_clock);
 
 /*
- * API to get SDIO Device Card ID
- */
-void libra_sdio_get_card_id(struct sdio_func *func, unsigned short *card_id)
-{
-	if (card_id)
-		*card_id = libra_sdio_card_id;
-}
-EXPORT_SYMBOL(libra_sdio_get_card_id);
-
-/*
  * SDIO Probe
  */
 static int libra_sdio_probe(struct sdio_func *func,
@@ -385,12 +244,9 @@ static int libra_sdio_probe(struct sdio_func *func,
 	libra_mmc_host = func->card->host;
 	libra_mmc_host_index = libra_mmc_host->index;
 	libra_sdio_func = func;
-	libra_sdio_card_id = sdio_dev_id->device;
 
-	printk(KERN_INFO "%s: success with block size of %d device_id=0x%x\n",
-		__func__,
-		func->cur_blksize,
-		sdio_dev_id->device);
+	printk(KERN_INFO "%s: success with block size of %d\n",
+		__func__, func->cur_blksize);
 
 	/* Turn off SDIO polling from now on */
 	libra_mmc_host->caps &= ~MMC_CAP_NEEDS_POLL;
@@ -399,103 +255,20 @@ static int libra_sdio_probe(struct sdio_func *func,
 
 static void libra_sdio_remove(struct sdio_func *func)
 {
-	if (libra_notify_card_removal_hdlr)
-		libra_notify_card_removal_hdlr();
 	libra_sdio_func = NULL;
 
 	printk(KERN_INFO "%s : Module removed.\n", __func__);
 }
 
-#ifdef CONFIG_PM
-static int libra_sdio_suspend(struct device *dev)
-{
-	struct sdio_func *func = dev_to_sdio_func(dev);
-	int ret = 0;
-
-	ret = sdio_set_host_pm_flags(func, MMC_PM_KEEP_POWER);
-
-	if (ret) {
-		printk(KERN_ERR "%s: Error Host doesn't support the keep power capability\n" ,
-			__func__);
-		return ret;
-	}
-	if (libra_suspend_hldr) {
-		/* Disable SDIO IRQ when driver is being suspended */
-		libra_enable_sdio_irq(func, 0);
-		ret = libra_suspend_hldr(func);
-		if (ret) {
-			printk(KERN_ERR
-			"%s: Libra driver is not able to suspend\n" , __func__);
-			/* Error - Restore SDIO IRQ */
-			libra_enable_sdio_irq(func, 1);
-			return ret;
-		}
-	}
-
-
-	return sdio_set_host_pm_flags(func, MMC_PM_WAKE_SDIO_IRQ);
-}
-
-static int libra_sdio_resume(struct device *dev)
-{
-	struct sdio_func *func = dev_to_sdio_func(dev);
-
-	if (libra_resume_hldr) {
-		libra_resume_hldr(func);
-		/* Restore SDIO IRQ */
-		libra_enable_sdio_irq(func, 1);
-	}
-
-	return 0;
-}
-#else
-#define libra_sdio_suspend 0
-#define libra_sdio_resume 0
-#endif
-
-static void libra_sdio_shutdown(struct device *dev)
-{
-	if (libra_sdio_shutdown_hdlr) {
-		libra_sdio_shutdown_hdlr();
-		printk(KERN_INFO "%s : Notified shutdown event to Libra driver.\n",
-			 __func__);
-	}
-}
-
-int libra_sdio_register_shutdown_hdlr(
-		shutdown_handler_t *libra_shutdown_hdlr)
-{
-	libra_sdio_shutdown_hdlr = libra_shutdown_hdlr;
-	return 0;
-}
-EXPORT_SYMBOL(libra_sdio_register_shutdown_hdlr);
-
-int libra_sdio_notify_card_removal(
-		notify_card_removal_t *libra_sdio_notify_card_removal_hdlr)
-{
-	libra_notify_card_removal_hdlr = libra_sdio_notify_card_removal_hdlr;
-	return 0;
-}
-EXPORT_SYMBOL(libra_sdio_notify_card_removal);
-
 static struct sdio_device_id libra_sdioid[] = {
-    {.class = 0, .vendor = LIBRA_MAN_ID,  .device = LIBRA_REV_1_0_CARD_ID},
-    {.class = 0, .vendor = VOLANS_MAN_ID, .device = VOLANS_REV_2_0_CARD_ID},
+    {.class = 0, .vendor = LIBRA_MAN_ID, .device = 0},
     {}
 };
-
-static const struct dev_pm_ops libra_sdio_pm_ops = {
-    .suspend = libra_sdio_suspend,
-    .resume = libra_sdio_resume,
-};
-
 static struct sdio_driver libra_sdiofn_driver = {
-	.name      = "libra_sdiofn",
-	.id_table  = libra_sdioid,
-	.probe     = libra_sdio_probe,
-	.remove    = libra_sdio_remove,
-	.drv.pm    = &libra_sdio_pm_ops,
-	.drv.shutdown    = libra_sdio_shutdown,
+    .name      = "libra_sdiofn",
+    .id_table  = libra_sdioid,
+    .probe     = libra_sdio_probe,
+    .remove    = libra_sdio_remove,
 };
 
 static int __init libra_sdioif_init(void)
@@ -503,10 +276,6 @@ static int __init libra_sdioif_init(void)
 	libra_sdio_func = NULL;
 	libra_mmc_host = NULL;
 	libra_mmc_host_index = -1;
-	libra_suspend_hldr = NULL;
-	libra_resume_hldr = NULL;
-	libra_notify_card_removal_hdlr = NULL;
-	libra_sdio_shutdown_hdlr = NULL;
 
 	sdio_register_driver(&libra_sdiofn_driver);
 
@@ -517,19 +286,13 @@ static int __init libra_sdioif_init(void)
 
 static void __exit libra_sdioif_exit(void)
 {
-	unsigned int attempts = 0;
-
-	if (!libra_detect_card_change()) {
-		do {
-			++attempts;
-			msleep(500);
-		} while (libra_sdio_func != NULL && attempts < 3);
-	}
-
-	if (libra_sdio_func != NULL)
-		printk(KERN_ERR "%s: Card removal not detected\n", __func__);
 
 	sdio_unregister_driver(&libra_sdiofn_driver);
+
+	if (libra_mmc_host) {
+		mmc_detect_change(libra_mmc_host, 0);
+		msleep(500);
+	}
 
 	libra_sdio_func = NULL;
 	libra_mmc_host = NULL;

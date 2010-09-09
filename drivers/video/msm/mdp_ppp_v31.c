@@ -9,6 +9,11 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
  */
 
 #include <linux/module.h>
@@ -789,34 +794,17 @@ void mdp_set_blend_attr(MDPIBUF *iBuf,
 	*tpVal = iBuf->mdpImg.tpVal;
 
 	if (iBuf->mdpImg.mdpOp & MDPOP_FG_PM_ALPHA) {
-		if (perPixelAlpha) {
-			*pppop_reg_ptr |= PPP_OP_ROT_ON |
-			PPP_OP_BLEND_ON | PPP_OP_BLEND_CONSTANT_ALPHA;
-			}
-		else {
-			if ((iBuf->mdpImg.mdpOp & MDPOP_ALPHAB)
-				&& (iBuf->mdpImg.alpha == 0xff)) {
-					iBuf->mdpImg.mdpOp &= ~(MDPOP_ALPHAB);
-				}
-
-			if ((iBuf->mdpImg.mdpOp & MDPOP_ALPHAB)
-				|| (iBuf->mdpImg.mdpOp & MDPOP_TRANSP)) {
-				*pppop_reg_ptr |=
-				PPP_OP_ROT_ON | PPP_OP_BLEND_ON |
-				PPP_OP_BLEND_CONSTANT_ALPHA |
-				PPP_OP_BLEND_ALPHA_BLEND_NORMAL;
-			}
-		}
+		*pppop_reg_ptr |= PPP_OP_ROT_ON |
+		    PPP_OP_BLEND_ON | PPP_OP_BLEND_CONSTANT_ALPHA;
 
 		bg_alpha = PPP_BLEND_BG_USE_ALPHA_SEL |
 				PPP_BLEND_BG_ALPHA_REVERSE;
 
 		if (perPixelAlpha)
 			bg_alpha |= PPP_BLEND_BG_SRCPIXEL_ALPHA;
-		else {
+		else
 			bg_alpha |= PPP_BLEND_BG_CONSTANT_ALPHA;
-			bg_alpha |= iBuf->mdpImg.alpha << 24;
-			}
+
 		outpdw(MDP_BASE + 0x70010, bg_alpha);
 
 		if (iBuf->mdpImg.mdpOp & MDPOP_TRANSP)

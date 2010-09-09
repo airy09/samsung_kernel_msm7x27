@@ -9,6 +9,11 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
  */
 
 #include "msm_fb.h"
@@ -1631,8 +1636,6 @@ static int mddi_toshiba_lcd_on(struct platform_device *pdev)
 	if (mfd->key != MFD_KEY)
 		return -EINVAL;
 
-	mddi_host_client_cnt_reset();
-
 	if (TM_GET_DID(mfd->panel.id) == TOSHIBA_VGA_PRIM)
 		mddi_toshiba_prim_init(mfd);
 	else
@@ -1660,7 +1663,7 @@ static int mddi_toshiba_lcd_off(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devinit mddi_toshiba_lcd_probe(struct platform_device *pdev)
+static int __init mddi_toshiba_lcd_probe(struct platform_device *pdev)
 {
 	if (pdev->id == 0) {
 		mddi_toshiba_pdata = pdev->dev.platform_data;

@@ -3,11 +3,16 @@
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
  * only version 2 as published by the Free Software Foundation.
- *
+
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  */
 
 #include "imx074.h"
@@ -17,7 +22,7 @@ const struct reg_struct_init imx074_reg_init[1] = {
 		0x02,	/* pll_divider 0x0305 */
 		0x4B,	/* plstatim 0x302b */
 		0x03,	/* reg_3024 */
-		0x00,	/* image_orientation 0x0101 */
+		0x03,	/* image_orientation 0x0101 */
 		0x80,	/* vndmy_ablmgshlmt 0x300a*/
 		0x08,	/* y_opbaddr_start_di 3014*/
 		0x37,	/* 0x3015*/
@@ -61,7 +66,7 @@ const struct reg_struct	imx074_reg_pat[2] = {
 	{
 		0x2D, /*pll_multiplier*/
 		0x06, /*frame_length_lines_hi 0x0340*/
-		0x2D, /* frame_length_lines_lo 0x0341*/
+		0x48, /* frame_length_lines_lo 0x0341*/
 		0x00, /* y_addr_start 0x347 */
 		0x2F, /* y_add_end 0x034b */
 		0x08, /* x_output_size_msb0x034c */

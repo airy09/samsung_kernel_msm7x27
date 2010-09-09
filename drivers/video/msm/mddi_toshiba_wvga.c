@@ -1,4 +1,4 @@
-/* Copyright (c) 2009-2010, 2012 Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2009, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -8,6 +8,11 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  *
  */
 
@@ -27,14 +32,12 @@ static int __init mddi_toshiba_wvga_init(void)
 
 	pinfo.xres = 800;
 	pinfo.yres = 480;
-	MSM_FB_SINGLE_MODE_PANEL(&pinfo);
 	pinfo.pdest = DISPLAY_2;
 	pinfo.type = MDDI_PANEL;
 	pinfo.mddi.vdopkt = MDDI_DEFAULT_PRIM_PIX_ATTR;
 	pinfo.wait_cycle = 0;
 	pinfo.bpp = 18;
 	pinfo.lcd.vsync_enable = TRUE;
-	pinfo.mddi.is_type1 = TRUE;
 	pinfo.lcd.refx100 = 6118;
 	pinfo.lcd.v_back_porch = 6;
 	pinfo.lcd.v_front_porch = 0;

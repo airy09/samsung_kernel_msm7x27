@@ -8,19 +8,21 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  */
 #include <linux/gpio.h>
 #include <linux/i2c.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
-#include <linux/module.h>
-#include <linux/mutex.h>
 #include <linux/slab.h>
+#include <linux/module.h>
 #include <linux/workqueue.h>
 #include <linux/i2c/sx150x.h>
-
-#define NO_UPDATE_PENDING	-1
 
 struct sx150x_device_data {
 	u8 reg_pullup;
@@ -38,22 +40,48 @@ struct sx150x_device_data {
 	u8 ngpios;
 };
 
+/*
+ * irq_cmds:
+ *
+ * A bitmap containing all the commands issued by the interrupt system
+ * for processing by the work-queue once out of interrupt context.
+ * A nice, static bitmap avoids the risk of dynamic memory allocation
+ * and the bitmap is small enough that the wasted space of a worst-case
+ * allocation is minimal.
+ * Bits for each gpio are as follows:
+ *
+ * 0 - mask
+ * 1 - unmask
+ * 2 - sense rising edge
+ * 3 - sense falling edge
+ *
+ * Every group of four bits is for a unique gpio, so bits 0-3 are for IO
+ * pin 0, 4-7, for pin 1, &c.
+ */
+#define CMD_MASK    0
+#define CMD_UNMASK  1
+#define CMD_RISING  2
+#define CMD_FALLING 3
+#define CMDS_PER_IO 4
+#define NCMDBITS    (16 * CMDS_PER_IO)
+#define CMD_BIT(pin, cmd) (((pin) * CMDS_PER_IO) + (cmd))
+
 struct sx150x_chip {
-	struct gpio_chip                 gpio_chip;
-	struct i2c_client               *client;
-	const struct sx150x_device_data *dev_cfg;
-	int                              irq_summary;
-	int                              irq_base;
-	int				 irq_update;
-	u32                              irq_sense;
-	u32				 irq_masked;
-	u32				 dev_sense;
-	u32				 dev_masked;
-	struct irq_chip                  irq_chip;
-	struct mutex                     lock;
+	struct gpio_chip           gpio_chip;
+	struct i2c_client         *client;
+	struct sx150x_device_data *dev_cfg;
+	struct mutex               mutex;
+	int                        irq_summary;
+	int                        irq_base;
+	u32                        irq_sense;
+	struct irq_chip            irq_chip;
+	struct work_struct         irq_mask_ws;
+	struct work_struct         irq_unmask_ws;
+	struct work_struct         irq_set_type_ws;
+	DECLARE_BITMAP(irq_cmds, NCMDBITS);
 };
 
-static const struct sx150x_device_data sx150x_devices[] = {
+static struct sx150x_device_data sx150x_devices[] = {
 	[0] = { /* sx1508q */
 		.reg_pullup   = 0x03,
 		.reg_pulldn   = 0x04,
@@ -177,42 +205,54 @@ static int sx150x_get_io(struct sx150x_chip *chip, unsigned offset)
 	s32 err;
 
 	sx150x_find_cfg(offset, 1, &reg, &mask, &shift);
+	mutex_lock(&chip->mutex);
 	err = sx150x_i2c_read(chip->client, reg, &data);
+	mutex_unlock(&chip->mutex);
 	if (err >= 0)
 		err = (data & mask) != 0 ? 1 : 0;
 
 	return err;
 }
 
-static s32 sx150x_set_oscio(struct sx150x_chip *chip, int val)
+static void sx150x_set_oscio(struct sx150x_chip *chip, int val)
 {
-	return sx150x_i2c_write(chip->client,
+	mutex_lock(&chip->mutex);
+	sx150x_i2c_write(chip->client,
 			chip->dev_cfg->reg_clock,
 			(val ? 0x1f : 0x10));
+	mutex_unlock(&chip->mutex);
 }
 
 static void sx150x_set_io(struct sx150x_chip *chip, unsigned offset, int val)
 {
+	mutex_lock(&chip->mutex);
 	sx150x_write_cfg(chip,
 			offset,
 			1,
 			chip->dev_cfg->reg_data,
 			(val ? 1 : 0));
+	mutex_unlock(&chip->mutex);
 }
 
 static int sx150x_io_input(struct sx150x_chip *chip, unsigned offset)
 {
-	return sx150x_write_cfg(chip,
-				offset,
-				1,
-				chip->dev_cfg->reg_dir,
-				1);
+	int err;
+
+	mutex_lock(&chip->mutex);
+	err = sx150x_write_cfg(chip,
+			offset,
+			1,
+			chip->dev_cfg->reg_dir,
+			1);
+	mutex_unlock(&chip->mutex);
+	return err;
 }
 
 static int sx150x_io_output(struct sx150x_chip *chip, unsigned offset, int val)
 {
 	int err;
 
+	mutex_lock(&chip->mutex);
 	err = sx150x_write_cfg(chip,
 			offset,
 			1,
@@ -224,23 +264,20 @@ static int sx150x_io_output(struct sx150x_chip *chip, unsigned offset, int val)
 				1,
 				chip->dev_cfg->reg_dir,
 				0);
+	mutex_unlock(&chip->mutex);
 	return err;
 }
 
 static int sx150x_gpio_get(struct gpio_chip *gc, unsigned offset)
 {
 	struct sx150x_chip *chip;
-	int status = -EINVAL;
 
 	chip = container_of(gc, struct sx150x_chip, gpio_chip);
 
-	if (!offset_is_oscio(chip, offset)) {
-		mutex_lock(&chip->lock);
-		status = sx150x_get_io(chip, offset);
-		mutex_unlock(&chip->lock);
-	}
-
-	return status;
+	if (offset_is_oscio(chip, offset))
+		return -ENOTSUPP;
+	else
+		return sx150x_get_io(chip, offset);
 }
 
 static void sx150x_gpio_set(struct gpio_chip *gc, unsigned offset, int val)
@@ -249,27 +286,22 @@ static void sx150x_gpio_set(struct gpio_chip *gc, unsigned offset, int val)
 
 	chip = container_of(gc, struct sx150x_chip, gpio_chip);
 
-	mutex_lock(&chip->lock);
 	if (offset_is_oscio(chip, offset))
 		sx150x_set_oscio(chip, val);
 	else
 		sx150x_set_io(chip, offset, val);
-	mutex_unlock(&chip->lock);
 }
 
 static int sx150x_gpio_direction_input(struct gpio_chip *gc, unsigned offset)
 {
 	struct sx150x_chip *chip;
-	int status = -EINVAL;
 
 	chip = container_of(gc, struct sx150x_chip, gpio_chip);
 
-	if (!offset_is_oscio(chip, offset)) {
-		mutex_lock(&chip->lock);
-		status = sx150x_io_input(chip, offset);
-		mutex_unlock(&chip->lock);
-	}
-	return status;
+	if (offset_is_oscio(chip, offset))
+		return -ENOTSUPP;
+	else
+		return sx150x_io_input(chip, offset);
 }
 
 static int sx150x_gpio_direction_output(struct gpio_chip *gc,
@@ -277,18 +309,13 @@ static int sx150x_gpio_direction_output(struct gpio_chip *gc,
 					int val)
 {
 	struct sx150x_chip *chip;
-	int status = 0;
 
 	chip = container_of(gc, struct sx150x_chip, gpio_chip);
 
-	mutex_lock(&chip->lock);
 	if (offset_is_oscio(chip, offset))
-		status = sx150x_set_oscio(chip, val);
+		return 0;
 	else
-		status = sx150x_io_output(chip, offset, val);
-	mutex_unlock(&chip->lock);
-
-	return status;
+		return sx150x_io_output(chip, offset, val);
 }
 
 static int sx150x_gpio_to_irq(struct gpio_chip *gc, unsigned offset)
@@ -301,133 +328,192 @@ static int sx150x_gpio_to_irq(struct gpio_chip *gc, unsigned offset)
 		return -EINVAL;
 
 	if (chip->irq_base < 0)
-		return -EINVAL;
+		return -ENOTSUPP;
 
 	return chip->irq_base + offset;
 }
 
-static void sx150x_irq_mask(struct irq_data *d)
+static void sx150x_irq_ack(unsigned int irq)
 {
-	struct irq_chip *ic = irq_data_get_irq_chip(d);
+}
+
+static void sx150x_irq_mask(unsigned int irq)
+{
+	struct irq_chip *ic;
+	struct sx150x_chip *chip;
+
+	ic   = get_irq_chip(irq);
+	chip = container_of(ic, struct sx150x_chip, irq_chip);
+
+	set_bit(CMD_BIT(irq - chip->irq_base, CMD_MASK), chip->irq_cmds);
+	schedule_work(&chip->irq_mask_ws);
+}
+
+static void sx150x_irq_mask_wfn(struct work_struct *work)
+{
 	struct sx150x_chip *chip;
 	unsigned n;
 
-	chip = container_of(ic, struct sx150x_chip, irq_chip);
-	n = d->irq - chip->irq_base;
-	chip->irq_masked |= (1 << n);
-	chip->irq_update = n;
+	chip = container_of(work, struct sx150x_chip, irq_mask_ws);
+
+	mutex_lock(&chip->mutex);
+	for (n = 0; n < chip->dev_cfg->ngpios; ++n) {
+		if (test_and_clear_bit(CMD_BIT(n, CMD_MASK),
+					chip->irq_cmds)) {
+			sx150x_write_cfg(chip, n, 1,
+					chip->dev_cfg->reg_irq_mask, 1);
+			sx150x_write_cfg(chip, n, 2,
+					chip->dev_cfg->reg_sense,
+					0);
+		}
+	}
+	mutex_unlock(&chip->mutex);
 }
 
-static void sx150x_irq_unmask(struct irq_data *d)
+static void sx150x_irq_mask_ack(unsigned int irq)
 {
-	struct irq_chip *ic = irq_data_get_irq_chip(d);
+	sx150x_irq_mask(irq);
+}
+
+static void sx150x_irq_unmask(unsigned int irq)
+{
+	struct irq_chip *ic;
+	struct sx150x_chip *chip;
+
+	ic   = get_irq_chip(irq);
+	chip = container_of(ic, struct sx150x_chip, irq_chip);
+
+	set_bit(CMD_BIT(irq - chip->irq_base, CMD_UNMASK), chip->irq_cmds);
+	schedule_work(&chip->irq_unmask_ws);
+}
+
+static void sx150x_irq_unmask_wfn(struct work_struct *work)
+{
 	struct sx150x_chip *chip;
 	unsigned n;
 
-	chip = container_of(ic, struct sx150x_chip, irq_chip);
-	n = d->irq - chip->irq_base;
+	chip = container_of(work, struct sx150x_chip, irq_unmask_ws);
 
-	chip->irq_masked &= ~(1 << n);
-	chip->irq_update = n;
+	mutex_lock(&chip->mutex);
+	for (n = 0; n < chip->dev_cfg->ngpios; ++n) {
+		if (test_and_clear_bit(CMD_BIT(n, CMD_UNMASK),
+					chip->irq_cmds)) {
+			sx150x_write_cfg(chip, n, 1,
+					chip->dev_cfg->reg_irq_mask, 0);
+			sx150x_write_cfg(chip, n, 2,
+					chip->dev_cfg->reg_sense,
+					chip->irq_sense >> (n * 2));
+		}
+	}
+	mutex_unlock(&chip->mutex);
 }
 
-static int sx150x_irq_set_type(struct irq_data *d, unsigned int flow_type)
+static void sx150x_irq_eoi(unsigned int irq)
 {
-	struct irq_chip *ic = irq_data_get_irq_chip(d);
+}
+
+static int sx150x_irq_set_affinity(unsigned int irq,
+				const struct cpumask *dest)
+{
+	return -ENOTSUPP;
+}
+
+static int sx150x_irq_retrigger(unsigned int irq)
+{
+	generic_handle_irq(irq);
+	return 0;
+}
+
+static int sx150x_irq_set_type(unsigned int irq, unsigned int flow_type)
+{
+	struct irq_chip *ic;
 	struct sx150x_chip *chip;
-	unsigned n, val = 0;
+	unsigned offset;
 
 	if (flow_type & (IRQ_TYPE_LEVEL_HIGH | IRQ_TYPE_LEVEL_LOW))
-		return -EINVAL;
+		return -ENOTSUPP;
 
-	chip = container_of(ic, struct sx150x_chip, irq_chip);
-	n = d->irq - chip->irq_base;
+	ic     = get_irq_chip(irq);
+	chip   = container_of(ic, struct sx150x_chip, irq_chip);
+	offset = irq - chip->irq_base;
 
 	if (flow_type & IRQ_TYPE_EDGE_RISING)
-		val |= 0x1;
+		set_bit(CMD_BIT(offset, CMD_RISING), chip->irq_cmds);
 	if (flow_type & IRQ_TYPE_EDGE_FALLING)
-		val |= 0x2;
+		set_bit(CMD_BIT(offset, CMD_FALLING), chip->irq_cmds);
+	schedule_work(&chip->irq_set_type_ws);
 
-	chip->irq_sense &= ~(3UL << (n * 2));
-	chip->irq_sense |= val << (n * 2);
-	chip->irq_update = n;
 	return 0;
+}
+
+static void sx150x_irq_set_type_wfn(struct work_struct *work)
+{
+	struct sx150x_chip *chip;
+	unsigned n;
+	unsigned val;
+	int irq;
+
+	chip = container_of(work, struct sx150x_chip, irq_set_type_ws);
+
+	mutex_lock(&chip->mutex);
+	for (n = 0; n < chip->dev_cfg->ngpios; ++n) {
+		val = 0;
+		if (test_and_clear_bit(CMD_BIT(n, CMD_RISING),
+					chip->irq_cmds))
+			val |= 0x1;
+		if (test_and_clear_bit(CMD_BIT(n, CMD_FALLING),
+					chip->irq_cmds))
+			val |= 0x2;
+
+		chip->irq_sense &= ~(3UL << (n * 2));
+		chip->irq_sense |= val << (n * 2);
+
+		irq = chip->irq_base + n;
+		if (!(irq_to_desc(irq)->status & IRQ_MASKED))
+			sx150x_write_cfg(chip, n, 2,
+					chip->dev_cfg->reg_sense, val);
+	}
+	mutex_unlock(&chip->mutex);
+}
+
+static int sx150x_irq_set_wake(unsigned int irq, unsigned int on)
+{
+	return -ENOTSUPP;
+}
+
+static irqreturn_t sx150x_irq_handler(int irq, void *dev_id)
+{
+	return IRQ_WAKE_THREAD;
 }
 
 static irqreturn_t sx150x_irq_thread_fn(int irq, void *dev_id)
 {
 	struct sx150x_chip *chip = (struct sx150x_chip *)dev_id;
-	unsigned nhandled = 0;
-	unsigned sub_irq;
-	unsigned n;
-	s32 err;
-	u8 val;
 	int i;
+	unsigned n;
+	unsigned sub_irq;
+	u8 val;
+	unsigned nhandled = 0;
 
+	mutex_lock(&chip->mutex);
 	for (i = (chip->dev_cfg->ngpios / 8) - 1; i >= 0; --i) {
-		err = sx150x_i2c_read(chip->client,
-				      chip->dev_cfg->reg_irq_src - i,
-				      &val);
-		if (err < 0)
-			continue;
-
+		sx150x_i2c_read(chip->client,
+				chip->dev_cfg->reg_irq_src - i,
+				&val);
 		sx150x_i2c_write(chip->client,
 				chip->dev_cfg->reg_irq_src - i,
 				val);
 		for (n = 0; n < 8; ++n) {
 			if (val & (1 << n)) {
 				sub_irq = chip->irq_base + (i * 8) + n;
-				handle_nested_irq(sub_irq);
+				generic_handle_irq(sub_irq);
 				++nhandled;
 			}
 		}
 	}
+	mutex_unlock(&chip->mutex);
 
 	return (nhandled > 0 ? IRQ_HANDLED : IRQ_NONE);
-}
-
-static void sx150x_irq_bus_lock(struct irq_data *d)
-{
-	struct irq_chip *ic = irq_data_get_irq_chip(d);
-	struct sx150x_chip *chip;
-
-	chip = container_of(ic, struct sx150x_chip, irq_chip);
-
-	mutex_lock(&chip->lock);
-}
-
-static void sx150x_irq_bus_sync_unlock(struct irq_data *d)
-{
-	struct irq_chip *ic = irq_data_get_irq_chip(d);
-	struct sx150x_chip *chip;
-	unsigned n;
-
-	chip = container_of(ic, struct sx150x_chip, irq_chip);
-
-	if (chip->irq_update == NO_UPDATE_PENDING)
-		goto out;
-
-	n = chip->irq_update;
-	chip->irq_update = NO_UPDATE_PENDING;
-
-	/* Avoid updates if nothing changed */
-	if (chip->dev_sense == chip->irq_sense &&
-	    chip->dev_sense == chip->irq_masked)
-		goto out;
-
-	chip->dev_sense = chip->irq_sense;
-	chip->dev_masked = chip->irq_masked;
-
-	if (chip->irq_masked & (1 << n)) {
-		sx150x_write_cfg(chip, n, 1, chip->dev_cfg->reg_irq_mask, 1);
-		sx150x_write_cfg(chip, n, 2, chip->dev_cfg->reg_sense, 0);
-	} else {
-		sx150x_write_cfg(chip, n, 1, chip->dev_cfg->reg_irq_mask, 0);
-		sx150x_write_cfg(chip, n, 2, chip->dev_cfg->reg_sense,
-				 chip->irq_sense >> (n * 2));
-	}
-out:
-	mutex_unlock(&chip->lock);
 }
 
 static void sx150x_init_chip(struct sx150x_chip *chip,
@@ -435,7 +521,7 @@ static void sx150x_init_chip(struct sx150x_chip *chip,
 			kernel_ulong_t driver_data,
 			struct sx150x_platform_data *pdata)
 {
-	mutex_init(&chip->lock);
+	mutex_init(&chip->mutex);
 
 	chip->client                     = client;
 	chip->dev_cfg                    = &sx150x_devices[driver_data];
@@ -451,19 +537,25 @@ static void sx150x_init_chip(struct sx150x_chip *chip,
 	if (pdata->oscio_is_gpo)
 		++chip->gpio_chip.ngpio;
 
-	chip->irq_chip.name                = client->name;
-	chip->irq_chip.irq_mask            = sx150x_irq_mask;
-	chip->irq_chip.irq_unmask          = sx150x_irq_unmask;
-	chip->irq_chip.irq_set_type        = sx150x_irq_set_type;
-	chip->irq_chip.irq_bus_lock        = sx150x_irq_bus_lock;
-	chip->irq_chip.irq_bus_sync_unlock = sx150x_irq_bus_sync_unlock;
-	chip->irq_summary                  = -1;
-	chip->irq_base                     = -1;
-	chip->irq_masked                   = ~0;
-	chip->irq_sense                    = 0;
-	chip->dev_masked                   = ~0;
-	chip->dev_sense                    = 0;
-	chip->irq_update		   = NO_UPDATE_PENDING;
+	chip->irq_chip.name         = client->name;
+	chip->irq_chip.ack          = sx150x_irq_ack;
+	chip->irq_chip.mask         = sx150x_irq_mask;
+	chip->irq_chip.mask_ack     = sx150x_irq_mask_ack;
+	chip->irq_chip.unmask       = sx150x_irq_unmask;
+	chip->irq_chip.eoi          = sx150x_irq_eoi;
+	chip->irq_chip.set_affinity = sx150x_irq_set_affinity;
+	chip->irq_chip.retrigger    = sx150x_irq_retrigger;
+	chip->irq_chip.set_type     = sx150x_irq_set_type;
+	chip->irq_chip.set_wake     = sx150x_irq_set_wake;
+	chip->irq_summary           = -1;
+	chip->irq_base              = -1;
+	chip->irq_sense             = 0;
+
+	bitmap_zero(chip->irq_cmds, NCMDBITS);
+
+	INIT_WORK(&chip->irq_mask_ws, sx150x_irq_mask_wfn);
+	INIT_WORK(&chip->irq_unmask_ws, sx150x_irq_unmask_wfn);
+	INIT_WORK(&chip->irq_set_type_ws, sx150x_irq_set_type_wfn);
 }
 
 static int sx150x_init_io(struct sx150x_chip *chip, u8 base, u16 cfg)
@@ -548,17 +640,17 @@ static int sx150x_install_irq_chip(struct sx150x_chip *chip,
 
 	for (n = 0; n < chip->dev_cfg->ngpios; ++n) {
 		irq = irq_base + n;
-		irq_set_chip_and_handler(irq, &chip->irq_chip, handle_edge_irq);
-		irq_set_nested_thread(irq, 1);
+		set_irq_chip(irq, &chip->irq_chip);
+		set_irq_handler(irq, handle_edge_irq);
 #ifdef CONFIG_ARM
 		set_irq_flags(irq, IRQF_VALID);
 #else
-		irq_set_noprobe(irq);
+		set_irq_noprobe(irq);
 #endif
 	}
 
 	err = request_threaded_irq(irq_summary,
-				NULL,
+				sx150x_irq_handler,
 				sx150x_irq_thread_fn,
 				IRQF_SHARED | IRQF_TRIGGER_FALLING,
 				chip->irq_chip.name,
@@ -579,16 +671,15 @@ static void sx150x_remove_irq_chip(struct sx150x_chip *chip)
 	free_irq(chip->irq_summary, chip);
 
 	for (n = 0; n < chip->dev_cfg->ngpios; ++n) {
-		irq = chip->irq_base + n;
-		irq_set_chip_and_handler(irq, NULL, NULL);
+		irq = gpio_to_irq(chip->gpio_chip.base + n);
+		set_irq_handler(irq, NULL);
+		set_irq_chip(irq, NULL);
 	}
 }
 
 static int __devinit sx150x_probe(struct i2c_client *client,
 				const struct i2c_device_id *id)
 {
-	static const u32 i2c_funcs = I2C_FUNC_SMBUS_BYTE_DATA |
-				     I2C_FUNC_SMBUS_WRITE_WORD_DATA;
 	struct sx150x_platform_data *pdata;
 	struct sx150x_chip *chip;
 	int rc;
@@ -597,8 +688,9 @@ static int __devinit sx150x_probe(struct i2c_client *client,
 	if (!pdata)
 		return -EINVAL;
 
-	if (!i2c_check_functionality(client->adapter, i2c_funcs))
-		return -ENOSYS;
+	if (!i2c_check_functionality(client->adapter,
+					I2C_FUNC_SMBUS_BYTE_DATA))
+		return -ENOTSUPP;
 
 	chip = kzalloc(sizeof(struct sx150x_chip), GFP_KERNEL);
 	if (!chip)
@@ -607,26 +699,24 @@ static int __devinit sx150x_probe(struct i2c_client *client,
 	sx150x_init_chip(chip, client, id->driver_data, pdata);
 	rc = sx150x_init_hw(chip, pdata);
 	if (rc < 0)
-		goto probe_fail_pre_gpiochip_add;
+		goto probe_fail;
 
 	rc = gpiochip_add(&chip->gpio_chip);
 	if (rc < 0)
-		goto probe_fail_pre_gpiochip_add;
+		goto probe_fail;
+
+	i2c_set_clientdata(client, chip);
 
 	if (pdata->irq_summary >= 0) {
 		rc = sx150x_install_irq_chip(chip,
 					pdata->irq_summary,
 					pdata->irq_base);
 		if (rc < 0)
-			goto probe_fail_post_gpiochip_add;
+			goto probe_fail;
 	}
 
-	i2c_set_clientdata(client, chip);
-
 	return 0;
-probe_fail_post_gpiochip_add:
-	WARN_ON(gpiochip_remove(&chip->gpio_chip) < 0);
-probe_fail_pre_gpiochip_add:
+probe_fail:
 	kfree(chip);
 	return rc;
 }
@@ -637,16 +727,20 @@ static int __devexit sx150x_remove(struct i2c_client *client)
 	int rc;
 
 	chip = i2c_get_clientdata(client);
-	rc = gpiochip_remove(&chip->gpio_chip);
-	if (rc < 0)
-		return rc;
+	i2c_set_clientdata(client, NULL);
 
 	if (chip->irq_summary >= 0)
 		sx150x_remove_irq_chip(chip);
 
+	rc = gpiochip_remove(&(chip->gpio_chip));
+
+	flush_work(&chip->irq_mask_ws);
+	flush_work(&chip->irq_unmask_ws);
+	flush_work(&chip->irq_set_type_ws);
+
 	kfree(chip);
 
-	return 0;
+	return rc;
 }
 
 static struct i2c_driver sx150x_driver = {
@@ -656,7 +750,7 @@ static struct i2c_driver sx150x_driver = {
 	},
 	.probe    = sx150x_probe,
 	.remove   = __devexit_p(sx150x_remove),
-	.id_table = sx150x_id,
+	.id_table = sx150x_id
 };
 
 static int __init sx150x_init(void)
@@ -673,5 +767,4 @@ module_exit(sx150x_exit);
 
 MODULE_AUTHOR("Gregory Bean <gbean@codeaurora.org>");
 MODULE_DESCRIPTION("Driver for Semtech SX150X I2C GPIO Expanders");
-MODULE_LICENSE("GPL v2");
-MODULE_ALIAS("i2c:sx150x");
+MODULE_LICENSE("GPLv2");
