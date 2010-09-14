@@ -1,4 +1,4 @@
-/* Copyright (c) 2009-2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2009, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -8,6 +8,11 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  *
  */
 #include <linux/module.h>
@@ -34,9 +39,6 @@
 #endif
 #include "mddihosti.h"
 #include "tvenc.h"
-#ifdef CONFIG_FB_MSM_HDMI_MSM_PANEL
-#include "hdmi_msm.h"
-#endif
 
 #define MDP_DEBUG_BUF	2048
 
@@ -70,7 +72,7 @@ static ssize_t mdp_offset_write(
 {
 	uint32 off, cnt;
 
-	if (count >= sizeof(debug_buf))
+	if (count > sizeof(debug_buf))
 		return -EFAULT;
 
 	if (copy_from_user(debug_buf, buff, count))
@@ -106,11 +108,12 @@ static ssize_t mdp_offset_read(
 
 	len = snprintf(debug_buf, sizeof(debug_buf), "0x%08x %d\n",
 					mdp_offset, mdp_count);
-	if (len < 0)
-		return 0;
 
 	if (copy_to_user(buff, debug_buf, len))
 		return -EFAULT;
+
+	if (len < 0)
+		return 0;
 
 	*ppos += len;	/* increase offset */
 
@@ -145,7 +148,7 @@ static ssize_t mdp_reg_write(
 	uint32 off, data;
 	int cnt;
 
-	if (count >= sizeof(debug_buf))
+	if (count > sizeof(debug_buf))
 		return -EFAULT;
 
 	if (copy_from_user(debug_buf, buff, count))
@@ -205,7 +208,6 @@ static ssize_t mdp_reg_read(
 				break;
 		}
 		*bp++ = '\n';
-		--dlen;
 		tot++;
 		cp += off;
 		if (num >= mdp_count)
@@ -217,6 +219,9 @@ static ssize_t mdp_reg_read(
 
 	if (copy_to_user(buff, debug_buf, tot))
 		return -EFAULT;
+
+	if (tot < 0)
+		return 0;
 
 	*ppos += tot;	/* increase offset */
 
@@ -272,6 +277,7 @@ static ssize_t mdp_stat_read(
 	int tot = 0;
 	int dlen;
 	char *bp;
+	unsigned long flag;
 
 
 	if (*ppos)
@@ -280,259 +286,114 @@ static ssize_t mdp_stat_read(
 	bp = debug_buf;
 	dlen = sizeof(debug_buf);
 
-	len = snprintf(bp, dlen, "\nmdp:\n");
-	bp += len;
-	dlen -= len;
-
-	len = snprintf(bp, dlen, "int_total: %08lu\t",
+	spin_lock_irqsave(&mdp_spin_lock, flag);
+	len = snprintf(bp, dlen, "intr_total:    %08lu\n",
 					mdp4_stat.intr_tot);
 	bp += len;
 	dlen -= len;
-
-	len = snprintf(bp, dlen, "int_overlay0: %08lu\t",
-					mdp4_stat.intr_overlay0);
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "int_overlay1: %08lu\n",
-					mdp4_stat.intr_overlay1);
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "int_overlay1: %08lu\n",
-					mdp4_stat.intr_overlay2);
-	bp += len;
-	dlen -= len;
-
-	len = snprintf(bp, dlen, "int_dmap: %08lu\t",
+	len = snprintf(bp, dlen, "intr_dma_p:    %08lu\n",
 					mdp4_stat.intr_dma_p);
 	bp += len;
 	dlen -= len;
-	len = snprintf(bp, dlen, "int_dmas: %08lu\t",
+	len = snprintf(bp, dlen, "intr_dma_s:    %08lu\n",
 					mdp4_stat.intr_dma_s);
 	bp += len;
 	dlen -= len;
-	len = snprintf(bp, dlen, "int_dmae:  %08lu\n",
+	len = snprintf(bp, dlen, "intr_dma_e:    %08lu\n",
 					mdp4_stat.intr_dma_e);
 	bp += len;
 	dlen -= len;
-
-	len = snprintf(bp, dlen, "primary:   vsync: %08lu\t",
-					mdp4_stat.intr_vsync_p);
+	len = snprintf(bp, dlen, "intr_overlay0: %08lu\n",
+					mdp4_stat.intr_overlay0);
 	bp += len;
 	dlen -= len;
-	len = snprintf(bp, dlen, "underrun: %08lu\n",
+	len = snprintf(bp, dlen, "intr_overlay1: %08lu\n",
+					mdp4_stat.intr_overlay1);
+	bp += len;
+	dlen -= len;
+	len = snprintf(bp, dlen, "unerrun_primary:  %08lu\n",
 					mdp4_stat.intr_underrun_p);
 	bp += len;
 	dlen -= len;
-	len = snprintf(bp, dlen, "external:  vsync: %08lu\t",
-					mdp4_stat.intr_vsync_e);
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "underrun: %08lu\n",
+	len = snprintf(bp, dlen, "unerrun_external:  %08lu\n\n",
 					mdp4_stat.intr_underrun_e);
 
 	bp += len;
 	dlen -= len;
-	len = snprintf(bp, dlen, "histogram: %08lu\t",
-					mdp4_stat.intr_histogram);
+	spin_unlock_irqrestore(&mdp_spin_lock, flag);
+
+	len = snprintf(bp, dlen, "kickoff_mddi:      %08lu\n",
+					mdp4_stat.kickoff_mddi);
 	bp += len;
 	dlen -= len;
-	len = snprintf(bp, dlen, "read_ptr: %08lu\n\n",
-					mdp4_stat.intr_rdptr);
+	len = snprintf(bp, dlen, "kickoff_mddi_skip: %08lu\n",
+					mdp4_stat.kickoff_mddi_skip);
 	bp += len;
 	dlen -= len;
-	len = snprintf(bp, dlen, "dsi:\n");
+	len = snprintf(bp, dlen, "kickoff_lcdc:      %08lu\n",
+					mdp4_stat.kickoff_lcdc);
 	bp += len;
 	dlen -= len;
-	len = snprintf(bp, dlen, "int_total: %08lu\tmdp_start: %08lu\n",
-			mdp4_stat.intr_dsi, mdp4_stat.dsi_mdp_start);
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "int_cmd: %08lu\t",
-					mdp4_stat.intr_dsi_cmd);
+	len = snprintf(bp, dlen, "kickoff_dtv:       %08lu\n",
+					mdp4_stat.kickoff_dtv);
 
 	bp += len;
 	dlen -= len;
-	len = snprintf(bp, dlen, "int_mdp: %08lu\t",
-					mdp4_stat.intr_dsi_mdp);
-
+	len = snprintf(bp, dlen, "kickoff_atv:       %08lu\n",
+					mdp4_stat.kickoff_atv);
 	bp += len;
 	dlen -= len;
-
-	len = snprintf(bp, dlen, "int_err: %08lu\n",
-					mdp4_stat.intr_dsi_err);
-
+	len = snprintf(bp, dlen, "kickoff_dsi:       %08lu\n\n",
+					mdp4_stat.kickoff_dsi);
 	bp += len;
 	dlen -= len;
-	len = snprintf(bp, dlen, "clk_on : %08lu\t",
-					mdp4_stat.dsi_clk_on);
-
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "clk_off: %08lu\n\n",
-					mdp4_stat.dsi_clk_off);
-
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "kickoff:\n");
-	bp += len;
-	dlen -= len;
-
-	len = snprintf(bp, dlen, "overlay0: %08lu\t",
-					mdp4_stat.kickoff_ov0);
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "dmap: %08lu\t",
-					mdp4_stat.kickoff_dmap);
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "dmas: %08lu\n",
-					mdp4_stat.kickoff_dmas);
-
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "overlay1: %08lu\t",
-					mdp4_stat.kickoff_ov1);
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "dmae: %08lu\n\n",
-					mdp4_stat.kickoff_dmae);
-
-	bp += len;
-	dlen -= len;
-
-	len = snprintf(bp, dlen, "overlay0_play:\n");
-	bp += len;
-	dlen -= len;
-
-	len = snprintf(bp, dlen, "set:   %08lu\t",
+	len = snprintf(bp, dlen, "overlay0_set:   %08lu\n",
 					mdp4_stat.overlay_set[0]);
 	bp += len;
 	dlen -= len;
-	len = snprintf(bp, dlen, "unset: %08lu\t",
+	len = snprintf(bp, dlen, "overlay0_unset: %08lu\n",
 					mdp4_stat.overlay_unset[0]);
 	bp += len;
 	dlen -= len;
-	len = snprintf(bp, dlen, "play:  %08lu\t",
+	len = snprintf(bp, dlen, "overlay0_play:  %08lu\n",
 					mdp4_stat.overlay_play[0]);
 	bp += len;
 	dlen -= len;
-	len = snprintf(bp, dlen, "commit:  %08lu\n",
-					mdp4_stat.overlay_commit[0]);
-	bp += len;
-	dlen -= len;
-
-	len = snprintf(bp, dlen, "overlay1_play:\n");
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "set:   %08lu\t",
+	len = snprintf(bp, dlen, "overlay1_set:   %08lu\n",
 					mdp4_stat.overlay_set[1]);
 	bp += len;
 	dlen -= len;
-	len = snprintf(bp, dlen, "unset: %08lu\t",
+	len = snprintf(bp, dlen, "overlay1_unset: %08lu\n",
 					mdp4_stat.overlay_unset[1]);
 	bp += len;
 	dlen -= len;
-	len = snprintf(bp, dlen, "play:  %08lu\t",
+	len = snprintf(bp, dlen, "overlay1_play:  %08lu\n\n",
 					mdp4_stat.overlay_play[1]);
 
 	bp += len;
 	dlen -= len;
-	len = snprintf(bp, dlen, "commit:  %08lu\n\n",
-					mdp4_stat.overlay_commit[1]);
+	len = snprintf(bp, dlen, "pipe_rgb1:  %08lu\n", mdp4_stat.pipe[0]);
 	bp += len;
 	dlen -= len;
-
-	len = snprintf(bp, dlen, "frame_push:\n");
+	len = snprintf(bp, dlen, "pipe_rgb2:  %08lu\n", mdp4_stat.pipe[1]);
 	bp += len;
 	dlen -= len;
-	len = snprintf(bp, dlen, "vg1 :   %08lu\t", mdp4_stat.pipe[0]);
+	len = snprintf(bp, dlen, "pipe_vg1:   %08lu\n", mdp4_stat.pipe[2]);
 	bp += len;
 	dlen -= len;
-	len = snprintf(bp, dlen, "vg2 :   %08lu\t", mdp4_stat.pipe[1]);
+	len = snprintf(bp, dlen, "pipe_vg2:   %08lu\n\n", mdp4_stat.pipe[3]);
 	bp += len;
 	dlen -= len;
-	len = snprintf(bp, dlen, "vg3 :   %08lu\n", mdp4_stat.pipe[5]);
+	len = snprintf(bp, dlen, "err_mixer:  %08lu\n", mdp4_stat.err_mixer);
 	bp += len;
 	dlen -= len;
-	len = snprintf(bp, dlen, "rgb1:   %08lu\t", mdp4_stat.pipe[2]);
+	len = snprintf(bp, dlen, "err_size:   %08lu\n", mdp4_stat.err_size);
 	bp += len;
 	dlen -= len;
-	len = snprintf(bp, dlen, "rgb2:   %08lu\t", mdp4_stat.pipe[3]);
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "rgb3:   %08lu\n\n", mdp4_stat.pipe[4]);
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "wait4vsync: ");
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "mixer0 : %08lu\t", mdp4_stat.wait4vsync0);
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "mixer1: %08lu\n\n", mdp4_stat.wait4vsync1);
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "iommu: ");
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "map : %08lu\t", mdp4_stat.iommu_map);
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "unmap: %08lu\t", mdp4_stat.iommu_unmap);
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "drop: %08lu\n\n", mdp4_stat.iommu_drop);
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "err_mixer : %08lu\t", mdp4_stat.err_mixer);
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "err_size  : %08lu\n", mdp4_stat.err_size);
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "err_scale : %08lu\t", mdp4_stat.err_scale);
+	len = snprintf(bp, dlen, "err_scale:  %08lu\n", mdp4_stat.err_scale);
 	bp += len;
 	dlen -= len;
 	len = snprintf(bp, dlen, "err_format: %08lu\n", mdp4_stat.err_format);
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "err_play  : %08lu\t", mdp4_stat.err_play);
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "err_stage : %08lu\n", mdp4_stat.err_stage);
-	bp += len;
-	dlen -= len;
-	len = snprintf(bp, dlen, "err_underflow: %08lu\n\n",
-		       mdp4_stat.err_underflow);
-	bp += len;
-	dlen -= len;
-
-	len = snprintf(bp, dlen, "writeback:\n");
-	bp += len;
-	dlen -= len;
-
-	len = snprintf(bp, dlen, "dsi_cmd: %08lu\t",
-					mdp4_stat.blt_dsi_cmd);
-	bp += len;
-	dlen -= len;
-
-	len = snprintf(bp, dlen, "dsi_video: %08lu\n",
-					mdp4_stat.blt_dsi_video);
-	bp += len;
-	dlen -= len;
-
-	len = snprintf(bp, dlen, "lcdc: %08lu\t",
-					mdp4_stat.blt_lcdc);
-	bp += len;
-	dlen -= len;
-
-	len = snprintf(bp, dlen, "dtv: %08lu\t",
-					mdp4_stat.blt_dtv);
-	bp += len;
-	dlen -= len;
-
-	len = snprintf(bp, dlen, "mddi: %08lu\n\n",
-					mdp4_stat.blt_mddi);
 	bp += len;
 	dlen -= len;
 
@@ -540,10 +401,11 @@ static ssize_t mdp_stat_read(
 	*bp = 0;
 	tot++;
 
-	if (tot < 0)
-		return 0;
 	if (copy_to_user(buff, debug_buf, tot))
 		return -EFAULT;
+
+	if (tot < 0)
+		return 0;
 
 	*ppos += tot;	/* increase offset */
 
@@ -620,9 +482,7 @@ static void mddi_reg_write(int ndx, uint32 off, uint32 data)
 	else
 		base = (char *)msm_pmdh_base;
 
-	mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_ON, FALSE);
 	writel(data, base + off);
-	mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_OFF, FALSE);
 
 	printk(KERN_INFO "%s: addr=%x data=%x\n",
 			__func__, (int)(base+off), (int)data);
@@ -646,8 +506,6 @@ static int mddi_reg_read(int ndx)
 	reg = mddi_regs_list;
 	bp = debug_buf;
 	dlen = sizeof(debug_buf);
-
-	mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_ON, FALSE);
 	while (reg->name) {
 		data = readl((u32)base + reg->off);
 		len = snprintf(bp, dlen, "%s:0x%08x\t\t= 0x%08x\n",
@@ -657,7 +515,6 @@ static int mddi_reg_read(int ndx)
 		dlen -= len;
 		reg++;
 	}
-	mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_OFF, FALSE);
 	*bp = 0;
 	tot++;
 
@@ -673,7 +530,7 @@ static ssize_t pmdh_reg_write(
 	uint32 off, data;
 	int cnt;
 
-	if (count >= sizeof(debug_buf))
+	if (count > sizeof(debug_buf))
 		return -EFAULT;
 
 	if (copy_from_user(debug_buf, buff, count))
@@ -701,10 +558,11 @@ static ssize_t pmdh_reg_read(
 
 	tot = mddi_reg_read(0);	/* pmdh */
 
-	if (tot < 0)
-		return 0;
 	if (copy_to_user(buff, debug_buf, tot))
 		return -EFAULT;
+
+	if (tot < 0)
+		return 0;
 
 	*ppos += tot;	/* increase offset */
 
@@ -719,6 +577,84 @@ static const struct file_operations pmdh_fops = {
 	.write = pmdh_reg_write,
 };
 
+
+#ifdef MDP4_MDDI_DMA_SWITCH
+static int vsync_reg_open(struct inode *inode, struct file *file)
+{
+	/* non-seekable */
+	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
+	return 0;
+}
+
+static int vsync_reg_release(struct inode *inode, struct file *file)
+{
+	return 0;
+}
+
+static ssize_t vsync_reg_write(
+	struct file *file,
+	const char __user *buff,
+	size_t count,
+	loff_t *ppos)
+{
+	uint32 enable;
+	int cnt;
+
+	if (count > sizeof(debug_buf))
+		return -EFAULT;
+
+	if (copy_from_user(debug_buf, buff, count))
+		return -EFAULT;
+
+	debug_buf[count] = 0;	/* end of string */
+
+	cnt = sscanf(debug_buf, "%x", &enable);
+
+	mdp_dmap_vsync_set(enable);
+
+	return count;
+}
+
+static ssize_t vsync_reg_read(
+	struct file *file,
+	char __user *buff,
+	size_t count,
+	loff_t *ppos)
+{
+	char *bp;
+	int len = 0;
+	int tot = 0;
+	int dlen;
+
+	if (*ppos)
+		return 0;	/* the end */
+
+	bp = debug_buf;
+	dlen = sizeof(debug_buf);
+	len = snprintf(bp, dlen, "%x\n", mdp_dmap_vsync_get());
+	tot += len;
+	bp += len;
+	*bp = 0;
+	tot++;
+
+	if (copy_to_user(buff, debug_buf, tot))
+		return -EFAULT;
+
+	*ppos += tot;	/* increase offset */
+
+	return tot;
+}
+
+
+static const struct file_operations vsync_fops = {
+	.open = vsync_reg_open,
+	.release = vsync_reg_release,
+	.read = vsync_reg_read,
+	.write = vsync_reg_write,
+};
+
+#endif
+
 static ssize_t emdh_reg_write(
 	struct file *file,
 	const char __user *buff,
@@ -728,7 +664,7 @@ static ssize_t emdh_reg_write(
 	uint32 off, data;
 	int cnt;
 
-	if (count >= sizeof(debug_buf))
+	if (count > sizeof(debug_buf))
 		return -EFAULT;
 
 	if (copy_from_user(debug_buf, buff, count))
@@ -756,10 +692,11 @@ static ssize_t emdh_reg_read(
 
 	tot = mddi_reg_read(1);	/* emdh */
 
-	if (tot < 0)
-		return 0;
 	if (copy_to_user(buff, debug_buf, tot))
 		return -EFAULT;
+
+	if (tot < 0)
+		return 0;
 
 	*ppos += tot;	/* increase offset */
 
@@ -849,10 +786,11 @@ static ssize_t dbg_base_read(
 	*bp = 0;
 	tot++;
 
-	if (tot < 0)
-		return 0;
 	if (copy_to_user(buff, debug_buf, tot))
 		return -EFAULT;
+
+	if (tot < 0)
+		return 0;
 
 	*ppos += tot;	/* increase offset */
 
@@ -874,7 +812,7 @@ static ssize_t dbg_offset_write(
 {
 	uint32 off, cnt, num, base;
 
-	if (count >= sizeof(debug_buf))
+	if (count > sizeof(debug_buf))
 		return -EFAULT;
 
 	if (copy_from_user(debug_buf, buff, count))
@@ -914,11 +852,12 @@ static ssize_t dbg_offset_read(
 
 	len = snprintf(debug_buf, sizeof(debug_buf), "0x%08x %d 0x%08x\n",
 				dbg_offset, dbg_count, (int)dbg_base);
-	if (len < 0)
-		return 0;
 
 	if (copy_to_user(buff, debug_buf, len))
 		return -EFAULT;
+
+	if (len < 0)
+		return 0;
 
 	*ppos += len;	/* increase offset */
 
@@ -942,7 +881,7 @@ static ssize_t dbg_reg_write(
 	uint32 off, data;
 	int cnt;
 
-	if (count >= sizeof(debug_buf))
+	if (count > sizeof(debug_buf))
 		return -EFAULT;
 
 	if (copy_from_user(debug_buf, buff, count))
@@ -1004,7 +943,6 @@ static ssize_t dbg_reg_read(
 		}
 		data = readl((u32)cp + off);
 		*bp++ = '\n';
-		--dlen;
 		tot++;
 		cp += off;
 		if (num >= dbg_count)
@@ -1015,6 +953,9 @@ static ssize_t dbg_reg_read(
 
 	if (copy_to_user(buff, debug_buf, tot))
 		return -EFAULT;
+
+	if (tot < 0)
+		return 0;
 
 	*ppos += tot;	/* increase offset */
 
@@ -1028,188 +969,6 @@ static const struct file_operations dbg_reg_fops = {
 	.read = dbg_reg_read,
 	.write = dbg_reg_write,
 };
-
-#ifdef CONFIG_FB_MSM_HDMI_MSM_PANEL
-static uint32 hdmi_offset;
-static uint32 hdmi_count;
-
-static int hdmi_open(struct inode *inode, struct file *file)
-{
-	/* non-seekable */
-	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
-	return 0;
-}
-
-static int hdmi_release(struct inode *inode, struct file *file)
-{
-	return 0;
-}
-
-static ssize_t hdmi_offset_write(
-	struct file *file,
-	const char __user *buff,
-	size_t count,
-	loff_t *ppos)
-{
-	uint32 off, cnt, num;
-
-	if (count >= sizeof(debug_buf))
-		return -EFAULT;
-
-	if (copy_from_user(debug_buf, buff, count))
-		return -EFAULT;
-
-	debug_buf[count] = 0;	/* end of string */
-
-	cnt = sscanf(debug_buf, "%x %d", &off, &num);
-
-	if (cnt < 0)
-		cnt = 0;
-
-	if (cnt >= 1)
-		hdmi_offset = off;
-	if (cnt >= 2)
-		hdmi_count = num;
-
-	printk(KERN_INFO "%s: offset=%x cnt=%d\n", __func__,
-				hdmi_offset, hdmi_count);
-
-	return count;
-}
-
-static ssize_t hdmi_offset_read(
-	struct file *file,
-	char __user *buff,
-	size_t count,
-	loff_t *ppos)
-{
-	int len = 0;
-
-
-	if (*ppos)
-		return 0;	/* the end */
-
-	len = snprintf(debug_buf, sizeof(debug_buf), "0x%08x %d\n",
-				hdmi_offset, hdmi_count);
-	if (len < 0)
-		return 0;
-
-	if (copy_to_user(buff, debug_buf, len))
-		return -EFAULT;
-
-	*ppos += len;	/* increase offset */
-
-	return len;
-}
-
-static const struct file_operations hdmi_off_fops = {
-	.open = hdmi_open,
-	.release = hdmi_release,
-	.read = hdmi_offset_read,
-	.write = hdmi_offset_write,
-};
-
-
-static ssize_t hdmi_reg_write(
-	struct file *file,
-	const char __user *buff,
-	size_t count,
-	loff_t *ppos)
-{
-	uint32 off, data, base;
-	int cnt;
-
-	if (count >= sizeof(debug_buf))
-		return -EFAULT;
-
-	if (copy_from_user(debug_buf, buff, count))
-		return -EFAULT;
-
-	base = hdmi_msm_get_io_base();
-	if (base == 0)
-		return -EFAULT;
-
-	debug_buf[count] = 0;	/* end of string */
-
-	cnt = sscanf(debug_buf, "%x %x", &off, &data);
-
-	writel(data, base + off);
-
-	printk(KERN_INFO "%s: addr=%x data=%x\n",
-			__func__, (int)(base+off), (int)data);
-
-	return count;
-}
-
-static ssize_t hdmi_reg_read(
-	struct file *file,
-	char __user *buff,
-	size_t count,
-	loff_t *ppos)
-{
-	int len = 0;
-	uint32 data;
-	int i, j, off, dlen, num;
-	char *bp, *cp;
-	int tot = 0;
-
-
-	if (*ppos)
-		return 0;	/* the end */
-
-	if (hdmi_msm_get_io_base() == 0)
-		return 0;	/* nothing to read */
-
-	j = 0;
-	num = 0;
-	bp = debug_buf;
-	cp = (char *)(hdmi_msm_get_io_base() + hdmi_offset);
-	dlen = sizeof(debug_buf);
-	while (j++ < 16) {
-		len = snprintf(bp, dlen, "0x%08x: ", (int)cp);
-		tot += len;
-		bp += len;
-		dlen -= len;
-		off = 0;
-		i = 0;
-		while (i++ < 4) {
-			data = readl(cp + off);
-			len = snprintf(bp, dlen, "%08x ", data);
-			tot += len;
-			bp += len;
-			dlen -= len;
-			off += 4;
-			num++;
-			if (num >= hdmi_count)
-				break;
-		}
-		data = readl((u32)cp + off);
-		*bp++ = '\n';
-		--dlen;
-		tot++;
-		cp += off;
-		if (num >= hdmi_count)
-			break;
-	}
-	*bp = 0;
-	tot++;
-
-	if (copy_to_user(buff, debug_buf, tot))
-		return -EFAULT;
-
-	*ppos += tot;	/* increase offset */
-
-	return tot;
-}
-
-
-static const struct file_operations hdmi_reg_fops = {
-	.open = hdmi_open,
-	.release = hdmi_release,
-	.read = hdmi_reg_read,
-	.write = hdmi_reg_write,
-};
-#endif
 
 /*
  * debugfs
@@ -1264,6 +1023,15 @@ int mdp_debugfs_init(void)
 		return -1;
 	}
 
+#ifdef MDP4_MDDI_DMA_SWITCH
+	if (debugfs_create_file("vsync", 0644, dent, 0, &vsync_fops)
+			== NULL) {
+		printk(KERN_ERR "%s(%d): debugfs_create_file: debug fail\n",
+			__FILE__, __LINE__);
+		return -1;
+	}
+#endif
+
 	dent = debugfs_create_dir("emdh", NULL);
 
 	if (IS_ERR(dent)) {
@@ -1307,30 +1075,6 @@ int mdp_debugfs_init(void)
 			__FILE__, __LINE__);
 		return -1;
 	}
-
-#ifdef CONFIG_FB_MSM_HDMI_MSM_PANEL
-	dent = debugfs_create_dir("hdmi", NULL);
-
-	if (IS_ERR(dent)) {
-		printk(KERN_ERR "%s(%d): debugfs_create_dir fail, error %ld\n",
-			__FILE__, __LINE__, PTR_ERR(dent));
-		return PTR_ERR(dent);
-	}
-
-	if (debugfs_create_file("off", 0644, dent, 0, &hdmi_off_fops)
-			== NULL) {
-		printk(KERN_ERR "%s(%d): debugfs_create_file: 'off' fail\n",
-			__FILE__, __LINE__);
-		return -ENOENT;
-	}
-
-	if (debugfs_create_file("reg", 0644, dent, 0, &hdmi_reg_fops)
-			== NULL) {
-		printk(KERN_ERR "%s(%d): debugfs_create_file: 'reg' fail\n",
-			__FILE__, __LINE__);
-		return -ENOENT;
-	}
-#endif
 
 	return 0;
 }
