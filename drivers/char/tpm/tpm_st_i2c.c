@@ -8,6 +8,11 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  */
 
 #include <linux/slab.h>
@@ -87,10 +92,6 @@ static int tpm_st_i2c_transfer_buf(struct tpm_chip *chip, u8 *buf, size_t count,
 
 	do {
 		if (!gpio_get_value(gpio)) {
-			/* reset the completion in case the irq fired
-			 * during the probe
-			 */
-			init_completion(com);
 			enable_irq(irq);
 			tmp = wait_for_completion_interruptible_timeout(
 				com, HZ/2);
@@ -219,7 +220,6 @@ static int tpm_st_i2c_probe(struct i2c_client *client,
 	int rc = 0;
 	struct tpm_st_i2c_platform_data *pd;
 	struct  tpm_chip *chip;
-	int high;
 
 	dev_dbg(&client->dev, "%s()\n", __func__);
 
@@ -262,24 +262,20 @@ static int tpm_st_i2c_probe(struct i2c_client *client,
 	/* This logic allows us to setup irq but not have it enabled, in
 	 * case the lines are already active
 	 */
-	high = gpio_get_value(pd->data_avail_gpio);
 	rc = request_irq(pd->data_avail_irq, tpm_st_i2c_isr, IRQF_TRIGGER_HIGH,
 			 DEVICE_NAME "-data", NULL);
 	if (rc) {
 		dev_err(&client->dev, "request for data irq failed\n");
 		goto data_irq_fail;
 	}
-	if (!high)
-		disable_irq(pd->data_avail_irq);
-	high = gpio_get_value(pd->accept_cmd_gpio);
+	disable_irq(pd->data_avail_irq);
 	rc = request_irq(pd->accept_cmd_irq, tpm_st_i2c_isr, IRQF_TRIGGER_HIGH,
 			 DEVICE_NAME "-cmd", NULL);
 	if (rc) {
 		dev_err(&client->dev, "request for cmd irq failed\n");
 		goto cmd_irq_fail;
 	}
-	if (!high)
-		disable_irq(pd->accept_cmd_irq);
+	/* accept command should already be high and the isr will disable it */
 
 	tpm_st_i2c_vendor.irq = pd->data_avail_irq;
 
