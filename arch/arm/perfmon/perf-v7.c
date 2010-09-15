@@ -1,14 +1,19 @@
 /* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- */
+*
+* This program is free software; you can redistribute it and/or modify
+* it under the terms of the GNU General Public License version 2 and
+* only version 2 as published by the Free Software Foundation.
+*
+* This program is distributed in the hope that it will be useful,
+* but WITHOUT ANY WARRANTY; without even the implied warranty of
+* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+* GNU General Public License for more details.
+*
+* You should have received a copy of the GNU General Public License
+* along with this program; if not, write to the Free Software
+* Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+* 02110-1301, USA.
+*/
 
 /*
 perf-v7.c
@@ -951,7 +956,12 @@ void pm_initialize(void)
 		return;
   initialized = 1;
 
-  irqid = INT_ARMQC_PERFMON;
+	#ifdef CONFIG_ARCH_QSD8X50
+		irqid = INT_ARM11_PM;
+	#endif
+	#ifdef CONFIG_ARCH_MSM7X30
+		irqid = INT_ARM11_PM;
+	#endif
   RCP15_PMCR(reg);
   imp = (reg>>24) & 0xFF;
   id  = (reg>>16) & 0xFF;
