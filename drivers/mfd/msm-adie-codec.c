@@ -9,6 +9,11 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
  */
 #include <linux/module.h>
 #include <linux/err.h>
@@ -148,21 +153,6 @@ int adie_codec_enable_sidetone(struct adie_codec_path *rx_path_ptr,
 }
 EXPORT_SYMBOL(adie_codec_enable_sidetone);
 
-int adie_codec_enable_anc(struct adie_codec_path *rx_path_ptr,
-	u32 enable, struct adie_codec_anc_data *calibration_writes)
-{
-	int rc = -EPERM;
-
-	if (cur_adie_ops != NULL) {
-		if (cur_adie_ops->codec_enable_anc != NULL)
-			rc = cur_adie_ops->codec_enable_anc(rx_path_ptr,
-				enable, calibration_writes);
-	}
-
-	return rc;
-}
-EXPORT_SYMBOL(adie_codec_enable_anc);
-
 int adie_codec_proceed_stage(struct adie_codec_path *path_ptr, u32 state)
 {
 	int rc = -EPERM;
@@ -177,20 +167,5 @@ int adie_codec_proceed_stage(struct adie_codec_path *path_ptr, u32 state)
 	return rc;
 }
 EXPORT_SYMBOL(adie_codec_proceed_stage);
-
-int adie_codec_set_master_mode(struct adie_codec_path *path_ptr, u8 master)
-{
-	int rc = -EPERM;
-
-	if (cur_adie_ops != NULL) {
-		if (cur_adie_ops->codec_set_master_mode != NULL)
-			rc = cur_adie_ops->codec_set_master_mode(path_ptr,
-					master);
-	} else
-		rc = -ENODEV;
-
-	return rc;
-}
-EXPORT_SYMBOL(adie_codec_set_master_mode);
 
 
