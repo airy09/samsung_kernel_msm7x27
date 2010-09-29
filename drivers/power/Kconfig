@@ -76,12 +76,6 @@ config BATTERY_DS2782
 	  Say Y here to enable support for the DS2782/DS2786 standalone battery
 	  gas-gauge.
 
-config BATTERY_DS2784
-	tristate "DS2784 battery driver "
-	select W1
-	help
-	  Say Y here to enable support for batteries with ds2784 chip.
-
 config BATTERY_PMU
 	tristate "Apple PMU battery"
 	depends on PPC32 && ADB_PMU
@@ -148,10 +142,35 @@ config CHARGER_PCF50633
 	help
 	 Say Y to include support for NXP PCF50633 Main Battery Charger.
 
-config CHARGER_PM8058
-	bool "Qualcomm PM8058 pmic charger driver"
-	depends on PM8058
+config BATTERY_MSM
+	tristate "MSM battery"
+	depends on ARCH_MSM
+	default m
 	help
-	  Say Y to include support for the pm8058 charge controller
+	  Say Y to enable support for the battery in Qualcomm MSM.
+
+config BATTERY_MSM8X60
+	tristate "MSM8X60 battery"
+	depends on (MACH_MSM8X60_SURF|| MACH_MSM8X60_FFA)
+	help
+	  MSM8660 SURF has dual charging paths to charge the battery.
+	  Say Y to enable support for the battery charging in
+	  Qualcomm MSM8X60 surf.
+
+config PM8058_CHARGER
+	tristate "pmic8058 charger"
+	depends on BATTERY_MSM8X60
+	depends on PMIC8058
+	help
+	  Say Y to enable support for battery charging from the pmic8058.
+	  pmic8058 provides a linear charging circuit connected to the usb
+	  cable on Qualcomm's msm8x60 surf board.
+
+config BATTERY_MSM_FAKE
+	tristate "Fake MSM battery"
+	depends on ARCH_MSM && BATTERY_MSM
+	default n
+	help
+	  Say Y to bypass actual battery queries.
 
 endif # POWER_SUPPLY
