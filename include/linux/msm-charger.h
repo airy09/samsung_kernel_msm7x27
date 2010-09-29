@@ -1,13 +1,29 @@
-/* Copyright (c) 2010-2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *     * Redistributions of source code must retain the above copyright
+ *       notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above
+ *       copyright notice, this list of conditions and the following
+ *       disclaimer in the documentation and/or other materials provided
+ *       with the distribution.
+ *     * Neither the name of Code Aurora Forum, Inc. nor the names of its
+ *       contributors may be used to endorse or promote products derived
+ *       from this software without specific prior written permission.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+ * BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+ * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
+ * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 #ifndef __MSM_CHARGER_H__
@@ -31,8 +47,6 @@ enum msm_hardware_charger_event {
 	CHG_BATT_TEMP_INRANGE,
 	CHG_BATT_INSERTED,
 	CHG_BATT_REMOVED,
-	CHG_BATT_STATUS_CHANGE,
-	CHG_BATT_NEEDS_RECHARGING,
 };
 
 /**
@@ -59,9 +73,6 @@ struct msm_hardware_charger {
 			       int chg_voltage, int chg_current);
 	int (*stop_charging) (struct msm_hardware_charger *hw_chg);
 	int (*charging_switched) (struct msm_hardware_charger *hw_chg);
-	void (*start_system_current) (struct msm_hardware_charger *hw_chg,
-							int chg_current);
-	void (*stop_system_current) (struct msm_hardware_charger *hw_chg);
 
 	void *charger_private;	/* used by the msm_charger.c */
 };
@@ -72,9 +83,6 @@ struct msm_battery_gauge {
 	int (*is_battery_present) (void);
 	int (*is_battery_temp_within_range) (void);
 	int (*is_battery_id_valid) (void);
-	int (*get_battery_status)(void);
-	int (*get_batt_remaining_capacity) (void);
-	int (*monitor_for_recharging) (void);
 };
 /**
  * struct msm_charger_platform_data
@@ -82,6 +90,8 @@ struct msm_battery_gauge {
  * @update_time: how often the userland be updated of the charging progress
  * @max_voltage: the max voltage the battery should be charged upto
  * @min_voltage: the voltage where charging method switches from trickle to fast
+ * @resume_voltage: the voltage to wait for before resume charging after the
+ *			battery has been fully charged
  * @get_batt_capacity_percent: a board specific function to return battery
  *			capacity. Can be null - a default one will be used
  */
@@ -90,11 +100,10 @@ struct msm_charger_platform_data {
 	unsigned int update_time;
 	unsigned int max_voltage;
 	unsigned int min_voltage;
+	unsigned int resume_voltage;
 	unsigned int (*get_batt_capacity_percent) (void);
 };
 
-typedef void (*notify_vbus_state) (int);
-#if defined(CONFIG_BATTERY_MSM8X60) || defined(CONFIG_BATTERY_MSM8X60_MODULE)
 void msm_battery_gauge_register(struct msm_battery_gauge *batt_gauge);
 void msm_battery_gauge_unregister(struct msm_battery_gauge *batt_gauge);
 int msm_charger_register(struct msm_hardware_charger *hw_chg);
@@ -103,37 +112,7 @@ int msm_charger_notify_event(struct msm_hardware_charger *hw_chg,
 			     enum msm_hardware_charger_event event);
 void msm_charger_vbus_draw(unsigned int mA);
 
+typedef void (*notify_vbus_state) (int);
 int msm_charger_register_vbus_sn(void (*callback)(int));
 void msm_charger_unregister_vbus_sn(void (*callback)(int));
-#else
-static inline void msm_battery_gauge_register(struct msm_battery_gauge *gauge)
-{
-}
-static inline void msm_battery_gauge_unregister(struct msm_battery_gauge *gauge)
-{
-}
-static inline int msm_charger_register(struct msm_hardware_charger *hw_chg)
-{
-	return -ENXIO;
-}
-static inline int msm_charger_unregister(struct msm_hardware_charger *hw_chg)
-{
-	return -ENXIO;
-}
-static inline int msm_charger_notify_event(struct msm_hardware_charger *hw_chg,
-			     enum msm_hardware_charger_event event)
-{
-	return -ENXIO;
-}
-static inline void msm_charger_vbus_draw(unsigned int mA)
-{
-}
-static inline int msm_charger_register_vbus_sn(void (*callback)(int))
-{
-	return -ENXIO;
-}
-static inline void msm_charger_unregister_vbus_sn(void (*callback)(int))
-{
-}
-#endif
 #endif /* __MSM_CHARGER_H__ */

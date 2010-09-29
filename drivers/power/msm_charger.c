@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -8,6 +8,11 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  *
  */
 
@@ -23,7 +28,6 @@
 #include <linux/msm-charger.h>
 #include <linux/time.h>
 #include <linux/slab.h>
-#include <linux/wakelock.h>
 
 #include <asm/atomic.h>
 
@@ -36,6 +40,7 @@
 
 #define DEFAULT_BATT_MAX_V		4200
 #define DEFAULT_BATT_MIN_V		3200
+#define DEFAULT_BATT_RESUME_V		4100
 
 #define MSM_CHARGER_GAUGE_MISSING_VOLTS 3500
 #define MSM_CHARGER_GAUGE_MISSING_TEMP  35
@@ -85,9 +90,14 @@ struct msm_charger_mux {
 
 	unsigned int max_voltage;
 	unsigned int min_voltage;
+	unsigned int resume_voltage;
 
 	unsigned int safety_time;
 	struct delayed_work teoc_work;
+
+	int stop_resume_check;
+	int resume_count;
+	struct delayed_work resume_work;
 
 	unsigned int update_time;
 	int stop_update;
@@ -107,7 +117,6 @@ struct msm_charger_mux {
 	int queue_count;
 	struct work_struct queue_work;
 	struct workqueue_struct *event_wq_thread;
-	struct wake_lock wl;
 };
 
 static struct msm_charger_mux msm_chg;
@@ -146,8 +155,8 @@ static int is_battery_present(void)
 	if (msm_batt_gauge && msm_batt_gauge->is_battery_present)
 		return msm_batt_gauge->is_battery_present();
 	else {
-		pr_err("msm-charger: no batt gauge batt=absent\n");
-		return 0;
+		pr_err("%s no batt gauge device\n", __func__);
+		return 1;
 	}
 }
 
@@ -156,8 +165,8 @@ static int is_battery_temp_within_range(void)
 	if (msm_batt_gauge && msm_batt_gauge->is_battery_temp_within_range)
 		return msm_batt_gauge->is_battery_temp_within_range();
 	else {
-		pr_err("msm-charger no batt gauge batt=out_of_temperatur\n");
-		return 0;
+		pr_err("no batt gauge device to check temp assuming valid\n");
+		return 1;
 	}
 }
 
@@ -166,17 +175,17 @@ static int is_battery_id_valid(void)
 	if (msm_batt_gauge && msm_batt_gauge->is_battery_id_valid)
 		return msm_batt_gauge->is_battery_id_valid();
 	else {
-		pr_err("msm-charger no batt gauge batt=id_invalid\n");
-		return 0;
+		pr_err("no batt gauge device to check id assuming valid\n");
+		return 1;
 	}
 }
 
-static int get_prop_battery_mvolts(void)
+static int get_battery_mvolts(void)
 {
 	if (msm_batt_gauge && msm_batt_gauge->get_battery_mvolts)
 		return msm_batt_gauge->get_battery_mvolts();
 	else {
-		pr_err("msm-charger no batt gauge assuming 3.5V\n");
+		pr_err("no batt guage device to measure volts assuming 3.5V\n");
 		return MSM_CHARGER_GAUGE_MISSING_VOLTS;
 	}
 }
@@ -186,77 +195,11 @@ static int get_battery_temperature(void)
 	if (msm_batt_gauge && msm_batt_gauge->get_battery_temperature)
 		return msm_batt_gauge->get_battery_temperature();
 	else {
-		pr_err("msm-charger no batt gauge assuming 35 deg G\n");
+		pr_err("no batt guage device to measure temp assume 35 degC\n");
 		return MSM_CHARGER_GAUGE_MISSING_TEMP;
 	}
 }
 
-static int get_prop_batt_capacity(void)
-{
-	int capacity;
-
-	if (msm_batt_gauge && msm_batt_gauge->get_batt_remaining_capacity)
-		capacity = msm_batt_gauge->get_batt_remaining_capacity();
-	else
-		capacity = msm_chg.get_batt_capacity_percent();
-
-	if (capacity <= 10)
-		pr_err("battery capacity very low = %d\n", capacity);
-
-	return capacity;
-}
-
-static int get_prop_batt_health(void)
-{
-	int status = 0;
-
-	if (msm_chg.batt_status == BATT_STATUS_TEMPERATURE_OUT_OF_RANGE)
-		status = POWER_SUPPLY_HEALTH_OVERHEAT;
-	else
-		status = POWER_SUPPLY_HEALTH_GOOD;
-
-	return status;
-}
-
-static int get_prop_charge_type(void)
-{
-	int status = 0;
-
-	if (msm_chg.batt_status == BATT_STATUS_TRKL_CHARGING)
-		status = POWER_SUPPLY_CHARGE_TYPE_TRICKLE;
-	else if (msm_chg.batt_status == BATT_STATUS_FAST_CHARGING)
-		status = POWER_SUPPLY_CHARGE_TYPE_FAST;
-	else
-		status = POWER_SUPPLY_CHARGE_TYPE_NONE;
-
-	return status;
-}
-
-static int get_prop_batt_status(void)
-{
-	int status = 0;
-
-	if (msm_batt_gauge && msm_batt_gauge->get_battery_status) {
-		status = msm_batt_gauge->get_battery_status();
-		if (status == POWER_SUPPLY_STATUS_CHARGING ||
-			status == POWER_SUPPLY_STATUS_FULL ||
-			status == POWER_SUPPLY_STATUS_DISCHARGING)
-			return status;
-	}
-
-	if (is_batt_status_charging())
-		status = POWER_SUPPLY_STATUS_CHARGING;
-	else if (msm_chg.batt_status ==
-		 BATT_STATUS_JUST_FINISHED_CHARGING
-			 && msm_chg.current_chg_priv != NULL)
-		status = POWER_SUPPLY_STATUS_FULL;
-	else
-		status = POWER_SUPPLY_STATUS_DISCHARGING;
-
-	return status;
-}
-
- /* This function should only be called within handle_event or resume */
 static void update_batt_status(void)
 {
 	if (is_battery_present()) {
@@ -264,16 +207,16 @@ static void update_batt_status(void)
 			if (msm_chg.batt_status == BATT_STATUS_ABSENT
 				|| msm_chg.batt_status
 					== BATT_STATUS_ID_INVALID) {
+				msm_chg.stop_resume_check = 0;
 				msm_chg.batt_status = BATT_STATUS_DISCHARGING;
 			}
 		} else
 			msm_chg.batt_status = BATT_STATUS_ID_INVALID;
 	 } else
-		msm_chg.batt_status = BATT_STATUS_ABSENT;
+			msm_chg.batt_status = BATT_STATUS_ABSENT;
 }
 
 static enum power_supply_property msm_power_props[] = {
-	POWER_SUPPLY_PROP_PRESENT,
 	POWER_SUPPLY_PROP_ONLINE,
 };
 
@@ -289,12 +232,8 @@ static int msm_power_get_property(struct power_supply *psy,
 
 	priv = container_of(psy, struct msm_hardware_charger_priv, psy);
 	switch (psp) {
-	case POWER_SUPPLY_PROP_PRESENT:
-		val->intval = !(priv->hw_chg_state == CHG_ABSENT_STATE);
-		break;
 	case POWER_SUPPLY_PROP_ONLINE:
-		val->intval = (priv->hw_chg_state == CHG_READY_STATE)
-			|| (priv->hw_chg_state == CHG_CHARGING_STATE);
+		val->intval = !(priv->hw_chg_state == CHG_ABSENT_STATE);
 		break;
 	default:
 		return -EINVAL;
@@ -320,13 +259,28 @@ static int msm_batt_power_get_property(struct power_supply *psy,
 {
 	switch (psp) {
 	case POWER_SUPPLY_PROP_STATUS:
-		val->intval = get_prop_batt_status();
+		if (is_batt_status_charging())
+			val->intval = POWER_SUPPLY_STATUS_CHARGING;
+		else if (msm_chg.batt_status ==
+			 BATT_STATUS_JUST_FINISHED_CHARGING
+			 && msm_chg.current_chg_priv != NULL)
+			val->intval = POWER_SUPPLY_STATUS_FULL;
+		else
+			val->intval = POWER_SUPPLY_STATUS_DISCHARGING;
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_TYPE:
-		val->intval = get_prop_charge_type();
+		if (msm_chg.batt_status == BATT_STATUS_TRKL_CHARGING)
+			val->intval = POWER_SUPPLY_CHARGE_TYPE_TRICKLE;
+		else if (msm_chg.batt_status == BATT_STATUS_FAST_CHARGING)
+			val->intval = POWER_SUPPLY_CHARGE_TYPE_FAST;
+		else
+			val->intval = POWER_SUPPLY_CHARGE_TYPE_NONE;
 		break;
 	case POWER_SUPPLY_PROP_HEALTH:
-		val->intval = get_prop_batt_health();
+		if (msm_chg.batt_status == BATT_STATUS_TEMPERATURE_OUT_OF_RANGE)
+			val->intval = POWER_SUPPLY_HEALTH_OVERHEAT;
+		else
+			val->intval = POWER_SUPPLY_HEALTH_GOOD;
 		break;
 	case POWER_SUPPLY_PROP_PRESENT:
 		val->intval = !(msm_chg.batt_status == BATT_STATUS_ABSENT);
@@ -341,10 +295,10 @@ static int msm_batt_power_get_property(struct power_supply *psy,
 		val->intval = msm_chg.min_voltage * 1000;
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
-		val->intval = get_prop_battery_mvolts();
+		val->intval = get_battery_mvolts();
 		break;
 	case POWER_SUPPLY_PROP_CAPACITY:
-		val->intval = get_prop_batt_capacity();
+		val->intval = msm_chg.get_batt_capacity_percent();
 		break;
 	default:
 		return -EINVAL;
@@ -360,7 +314,6 @@ static struct power_supply msm_psy_batt = {
 	.get_property = msm_batt_power_get_property,
 };
 
-static int usb_chg_current;
 static struct msm_hardware_charger_priv *usb_hw_chg_priv;
 static void (*notify_vbus_state_func_ptr)(int);
 static int usb_notified_of_insertion;
@@ -409,7 +362,7 @@ static void notify_usb_of_the_plugin_event(struct msm_hardware_charger_priv
 
 static unsigned int msm_chg_get_batt_capacity_percent(void)
 {
-	unsigned int current_voltage = get_prop_battery_mvolts();
+	unsigned int current_voltage = get_battery_mvolts();
 	unsigned int low_voltage = msm_chg.min_voltage;
 	unsigned int high_voltage = msm_chg.max_voltage;
 
@@ -479,43 +432,25 @@ static int msm_charging_switched(struct msm_hardware_charger_priv *priv)
 
 static int msm_stop_charging(struct msm_hardware_charger_priv *priv)
 {
-	int ret;
-
-	ret = priv->hw_chg->stop_charging(priv->hw_chg);
-	if (!ret)
-		wake_unlock(&msm_chg.wl);
-	return ret;
+	return priv->hw_chg->stop_charging(priv->hw_chg);
 }
 
-static void msm_enable_system_current(struct msm_hardware_charger_priv *priv)
-{
-	if (priv->hw_chg->start_system_current)
-		priv->hw_chg->start_system_current(priv->hw_chg,
-					 priv->max_source_current);
-}
-
-static void msm_disable_system_current(struct msm_hardware_charger_priv *priv)
-{
-	if (priv->hw_chg->stop_system_current)
-		priv->hw_chg->stop_system_current(priv->hw_chg);
-}
-
-/* the best charger has been selected -start charging from current_chg_priv */
+/* the best charger has been selected -start charging from current_chg_priv*/
 static int msm_start_charging(void)
 {
 	int ret;
 	struct msm_hardware_charger_priv *priv;
 
 	priv = msm_chg.current_chg_priv;
-	wake_lock(&msm_chg.wl);
-	ret = priv->hw_chg->start_charging(priv->hw_chg, msm_chg.max_voltage,
+	ret =
+	    priv->hw_chg->start_charging(priv->hw_chg, msm_chg.max_voltage,
 					 priv->max_source_current);
 	if (ret) {
-		wake_unlock(&msm_chg.wl);
-		dev_err(msm_chg.dev, "%s couldnt start chg error = %d\n",
+		dev_err(msm_chg.dev, "%s couldnt start chg error = %d",
 			priv->hw_chg->name, ret);
-	} else
+	} else {
 		priv->hw_chg_state = CHG_CHARGING_STATE;
+	}
 
 	return ret;
 }
@@ -526,28 +461,28 @@ static void handle_charging_done(struct msm_hardware_charger_priv *priv)
 		if (msm_chg.current_chg_priv->hw_chg_state ==
 		    CHG_CHARGING_STATE)
 			if (msm_stop_charging(msm_chg.current_chg_priv)) {
-				dev_err(msm_chg.dev, "%s couldnt stop chg\n",
+				dev_err(msm_chg.dev, "%s couldnt stop chg",
 					msm_chg.current_chg_priv->hw_chg->name);
 			}
 		msm_chg.current_chg_priv->hw_chg_state = CHG_READY_STATE;
 
 		msm_chg.batt_status = BATT_STATUS_JUST_FINISHED_CHARGING;
-		dev_info(msm_chg.dev, "%s: stopping safety timer work\n",
+		dev_info(msm_chg.dev, "%s: stopping safety timer work",
 				__func__);
 		cancel_delayed_work(&msm_chg.teoc_work);
-
-		if (msm_batt_gauge && msm_batt_gauge->monitor_for_recharging)
-			msm_batt_gauge->monitor_for_recharging();
-		else
-			dev_err(msm_chg.dev,
-			      "%s: no batt gauge recharge monitor\n", __func__);
+		dev_info(msm_chg.dev, "%s: starting resume timer work",
+				__func__);
+		queue_delayed_work(msm_chg.event_wq_thread,
+					&msm_chg.resume_work,
+				      round_jiffies_relative(msecs_to_jiffies
+						     (RESUME_CHECK_PERIOD_MS)));
 	}
 }
 
 static void teoc(struct work_struct *work)
 {
 	/* we have been charging too long - stop charging */
-	dev_info(msm_chg.dev, "%s: safety timer work expired\n", __func__);
+	dev_info(msm_chg.dev, "%s: safety timer work expired", __func__);
 
 	mutex_lock(&msm_chg.status_lock);
 	if (msm_chg.current_chg_priv != NULL
@@ -559,18 +494,17 @@ static void teoc(struct work_struct *work)
 
 static void handle_battery_inserted(void)
 {
+	msm_chg.stop_resume_check = 0;
 	/* if a charger is already present start charging */
-	if (msm_chg.current_chg_priv != NULL &&
-	    is_batt_status_capable_of_charging() &&
-	    !is_batt_status_charging()) {
+	if (msm_chg.current_chg_priv != NULL) {
 		if (msm_start_charging()) {
-			dev_err(msm_chg.dev, "%s couldnt start chg\n",
+			dev_err(msm_chg.dev, "%s couldnt start chg",
 				msm_chg.current_chg_priv->hw_chg->name);
 			return;
 		}
 		msm_chg.batt_status = BATT_STATUS_TRKL_CHARGING;
 
-		dev_info(msm_chg.dev, "%s: starting safety timer work\n",
+		dev_info(msm_chg.dev, "%s: starting safety timer work",
 				__func__);
 		queue_delayed_work(msm_chg.event_wq_thread,
 					&msm_chg.teoc_work,
@@ -580,21 +514,79 @@ static void handle_battery_inserted(void)
 	}
 }
 
+#define MSM_CHARGER_RESUME_COUNT 5
+static void resume_charging(struct work_struct *work)
+{
+	dev_dbg(msm_chg.dev, "%s resuming charging %d", __func__,
+						msm_chg.resume_count);
+
+	if (msm_chg.stop_resume_check) {
+		msm_chg.stop_resume_check = 0;
+		pr_err("%s stopping resume", __func__);
+		return;
+	}
+
+	update_batt_status();
+	if (msm_chg.batt_status != BATT_STATUS_JUST_FINISHED_CHARGING) {
+		pr_err("%s called outside JFC state", __func__);
+		return;
+	}
+
+	if (get_battery_mvolts() < msm_chg.resume_voltage)
+		msm_chg.resume_count++;
+	else
+		msm_chg.resume_count = 0;
+
+	/*
+	 * if we are within 500mV of min voltage range forget the count
+	 * force start battery charging by increasing resume count
+	 */
+	if (get_battery_mvolts() < msm_chg.min_voltage + 500) {
+		pr_err("%s: batt lost voltage rapidly -force resume charging\n",
+					__func__);
+		msm_chg.resume_count += MSM_CHARGER_RESUME_COUNT + 1;
+	}
+
+	if (msm_chg.resume_count > MSM_CHARGER_RESUME_COUNT) {
+		/* the battery has dropped below 4.1V for 5 mins
+		 * straight- resume charging */
+		/* act as if the battery was just plugged in */
+		mutex_lock(&msm_chg.status_lock);
+		msm_chg.batt_status = BATT_STATUS_DISCHARGING;
+		msm_chg.resume_count = 0;
+		handle_battery_inserted();
+		power_supply_changed(&msm_psy_batt);
+		if (msm_chg.current_chg_priv != NULL)
+			power_supply_changed(&msm_chg.current_chg_priv->psy);
+		mutex_unlock(&msm_chg.status_lock);
+	} else {
+		/* reschedule resume check */
+		dev_info(msm_chg.dev, "%s: rescheduling resume timer work",
+				__func__);
+		queue_delayed_work(msm_chg.event_wq_thread,
+					&msm_chg.resume_work,
+				      round_jiffies_relative(msecs_to_jiffies
+						     (RESUME_CHECK_PERIOD_MS)));
+	}
+}
+
 static void handle_battery_removed(void)
 {
 	/* if a charger is charging the battery stop it */
 	if (msm_chg.current_chg_priv != NULL
 	    && msm_chg.current_chg_priv->hw_chg_state == CHG_CHARGING_STATE) {
 		if (msm_stop_charging(msm_chg.current_chg_priv)) {
-			dev_err(msm_chg.dev, "%s couldnt stop chg\n",
+			dev_err(msm_chg.dev, "%s couldnt stop chg",
 				msm_chg.current_chg_priv->hw_chg->name);
 		}
 		msm_chg.current_chg_priv->hw_chg_state = CHG_READY_STATE;
 
-		dev_info(msm_chg.dev, "%s: stopping safety timer work\n",
+		dev_info(msm_chg.dev, "%s: stopping safety timer work",
 				__func__);
 		cancel_delayed_work(&msm_chg.teoc_work);
 	}
+	msm_chg.stop_resume_check = 1;
+	cancel_delayed_work(&msm_chg.resume_work);
 }
 
 static void update_heartbeat(struct work_struct *work)
@@ -622,8 +614,6 @@ static void update_heartbeat(struct work_struct *work)
 			handle_battery_removed();
 		}
 	}
-	pr_debug("msm-charger %s batt_status= %d\n",
-				__func__, msm_chg.batt_status);
 
 	if (msm_chg.current_chg_priv
 		&& msm_chg.current_chg_priv->hw_chg_state
@@ -647,51 +637,36 @@ static void update_heartbeat(struct work_struct *work)
 						     (msm_chg.update_time)));
 }
 
-/* set the charger state to READY before calling this */
+/* set the charger state to READY before calling this*/
 static void handle_charger_ready(struct msm_hardware_charger_priv *hw_chg_priv)
 {
-	struct msm_hardware_charger_priv *old_chg_priv = NULL;
-
 	debug_print(__func__, hw_chg_priv);
 
 	if (msm_chg.current_chg_priv != NULL
 	    && hw_chg_priv->hw_chg->rating >
 	    msm_chg.current_chg_priv->hw_chg->rating) {
-		/*
-		 * a better charger was found, ask the current charger
-		 * to stop charging if it was charging
-		 */
 		if (msm_chg.current_chg_priv->hw_chg_state ==
 		    CHG_CHARGING_STATE) {
 			if (msm_stop_charging(msm_chg.current_chg_priv)) {
-				dev_err(msm_chg.dev, "%s couldnt stop chg\n",
+				dev_err(msm_chg.dev, "%s couldnt stop chg",
 					msm_chg.current_chg_priv->hw_chg->name);
 				return;
 			}
 			if (msm_charging_switched(msm_chg.current_chg_priv)) {
-				dev_err(msm_chg.dev, "%s couldnt stop chg\n",
+				dev_err(msm_chg.dev, "%s couldnt stop chg",
 					msm_chg.current_chg_priv->hw_chg->name);
 				return;
 			}
 		}
 		msm_chg.current_chg_priv->hw_chg_state = CHG_READY_STATE;
-		old_chg_priv = msm_chg.current_chg_priv;
 		msm_chg.current_chg_priv = NULL;
 	}
 
 	if (msm_chg.current_chg_priv == NULL) {
 		msm_chg.current_chg_priv = hw_chg_priv;
 		dev_info(msm_chg.dev,
-			 "%s: best charger = %s\n", __func__,
+			 "%s: best charger = %s", __func__,
 			 msm_chg.current_chg_priv->hw_chg->name);
-
-		msm_enable_system_current(msm_chg.current_chg_priv);
-		/*
-		 * since a better charger was chosen, ask the old
-		 * charger to stop providing system current
-		 */
-		if (old_chg_priv != NULL)
-			msm_disable_system_current(old_chg_priv);
 
 		if (!is_batt_status_capable_of_charging())
 			return;
@@ -703,7 +678,7 @@ static void handle_charger_ready(struct msm_hardware_charger_priv *hw_chg_priv)
 			 * timer */
 			if (!is_batt_status_charging()) {
 				dev_info(msm_chg.dev,
-				       "%s: starting safety timer\n", __func__);
+					 "%s: starting safety timer", __func__);
 				queue_delayed_work(msm_chg.event_wq_thread,
 							&msm_chg.teoc_work,
 						      round_jiffies_relative
@@ -728,11 +703,10 @@ static void handle_charger_removed(struct msm_hardware_charger_priv
 	debug_print(__func__, hw_chg_removed);
 
 	if (msm_chg.current_chg_priv == hw_chg_removed) {
-		msm_disable_system_current(hw_chg_removed);
 		if (msm_chg.current_chg_priv->hw_chg_state
 						== CHG_CHARGING_STATE) {
 			if (msm_stop_charging(hw_chg_removed)) {
-				dev_err(msm_chg.dev, "%s couldnt stop chg\n",
+				dev_err(msm_chg.dev, "%s couldnt stop chg",
 					msm_chg.current_chg_priv->hw_chg->name);
 			}
 		}
@@ -744,7 +718,7 @@ static void handle_charger_removed(struct msm_hardware_charger_priv
 	if (msm_chg.current_chg_priv == NULL) {
 		hw_chg_priv = find_best_charger();
 		if (hw_chg_priv == NULL) {
-			dev_info(msm_chg.dev, "%s: no chargers\n", __func__);
+			dev_info(msm_chg.dev, "%s: no chargers ", __func__);
 			/* if the battery was Just finished charging
 			 * we keep that state as is so that we dont rush
 			 * in to charging the battery when a charger is
@@ -753,9 +727,8 @@ static void handle_charger_removed(struct msm_hardware_charger_priv
 				msm_chg.batt_status = BATT_STATUS_DISCHARGING;
 		} else {
 			msm_chg.current_chg_priv = hw_chg_priv;
-			msm_enable_system_current(hw_chg_priv);
 			dev_info(msm_chg.dev,
-				 "%s: best charger = %s\n", __func__,
+				 "%s: best charger = %s", __func__,
 				 msm_chg.current_chg_priv->hw_chg->name);
 
 			if (!is_batt_status_capable_of_charging())
@@ -770,7 +743,7 @@ static void handle_charger_removed(struct msm_hardware_charger_priv
 
 	/* if we arent charging stop the safety timer */
 	if (!is_batt_status_charging()) {
-		dev_info(msm_chg.dev, "%s: stopping safety timer work\n",
+		dev_info(msm_chg.dev, "%s: stopping safety timer work",
 				__func__);
 		cancel_delayed_work(&msm_chg.teoc_work);
 	}
@@ -778,15 +751,14 @@ static void handle_charger_removed(struct msm_hardware_charger_priv
 
 static void handle_event(struct msm_hardware_charger *hw_chg, int event)
 {
-	struct msm_hardware_charger_priv *priv = NULL;
+	struct msm_hardware_charger_priv *priv;
 
-	/*
-	 * if hw_chg is NULL then this event comes from non-charger
-	 * parties like battery gauge
-	 */
-	if (hw_chg)
-		priv = hw_chg->charger_private;
+	if (hw_chg == NULL)
+		return;
 
+	priv = hw_chg->charger_private;
+
+	dev_info(msm_chg.dev, "%s %d from %s\n", __func__, event, hw_chg->name);
 	mutex_lock(&msm_chg.status_lock);
 
 	switch (event) {
@@ -801,13 +773,6 @@ static void handle_event(struct msm_hardware_charger *hw_chg, int event)
 		if (hw_chg->type == CHG_TYPE_USB) {
 			priv->hw_chg_state = CHG_PRESENT_STATE;
 			notify_usb_of_the_plugin_event(priv, 1);
-			if (usb_chg_current) {
-				priv->max_source_current = usb_chg_current;
-				usb_chg_current = 0;
-				/* usb has already indicated us to charge */
-				priv->hw_chg_state = CHG_READY_STATE;
-				handle_charger_ready(priv);
-			}
 		} else {
 			priv->hw_chg_state = CHG_READY_STATE;
 			handle_charger_ready(priv);
@@ -815,12 +780,12 @@ static void handle_event(struct msm_hardware_charger *hw_chg, int event)
 		break;
 	case CHG_ENUMERATED_EVENT:	/* only in USB types */
 		if (priv->hw_chg_state == CHG_ABSENT_STATE) {
-			dev_info(msm_chg.dev, "%s enum withuot presence\n",
+			dev_info(msm_chg.dev, "%s enum withuot presence",
 				 hw_chg->name);
 			break;
 		}
 		update_batt_status();
-		dev_dbg(msm_chg.dev, "%s enum with %dmA to draw\n",
+		dev_dbg(msm_chg.dev, "%s enum with %dmA to draw",
 			 hw_chg->name, priv->max_source_current);
 		if (priv->max_source_current == 0) {
 			/* usb subsystem doesnt want us to draw
@@ -837,15 +802,13 @@ static void handle_event(struct msm_hardware_charger *hw_chg, int event)
 		break;
 	case CHG_REMOVED_EVENT:
 		if (priv->hw_chg_state == CHG_ABSENT_STATE) {
-			dev_info(msm_chg.dev, "%s cable already removed\n",
+			dev_info(msm_chg.dev, "%s cable already removed",
 				 hw_chg->name);
 			break;
 		}
 		update_batt_status();
-		if (hw_chg->type == CHG_TYPE_USB) {
-			usb_chg_current = 0;
+		if (hw_chg->type == CHG_TYPE_USB)
 			notify_usb_of_the_plugin_event(priv, 0);
-		}
 		handle_charger_removed(priv, CHG_ABSENT_STATE);
 		break;
 	case CHG_DONE_EVENT:
@@ -856,11 +819,6 @@ static void handle_event(struct msm_hardware_charger *hw_chg, int event)
 		/* only update if we are TRKL charging */
 		if (msm_chg.batt_status == BATT_STATUS_TRKL_CHARGING)
 			msm_chg.batt_status = BATT_STATUS_FAST_CHARGING;
-		break;
-	case CHG_BATT_NEEDS_RECHARGING:
-		msm_chg.batt_status = BATT_STATUS_DISCHARGING;
-		handle_battery_inserted();
-		priv = msm_chg.current_chg_priv;
 		break;
 	case CHG_BATT_TEMP_OUTOFRANGE:
 		/* the batt_temp out of range can trigger
@@ -912,19 +870,13 @@ static void handle_event(struct msm_hardware_charger *hw_chg, int event)
 		msm_chg.batt_status = BATT_STATUS_ABSENT;
 		handle_battery_removed();
 		break;
-	case CHG_BATT_STATUS_CHANGE:
-		/* TODO  battery SOC like battery-alarm/charging-full features
-		can be added here for future improvement */
-		break;
 	}
 	dev_dbg(msm_chg.dev, "%s %d done batt_status=%d\n", __func__,
 		event, msm_chg.batt_status);
 
 	/* update userspace */
-	if (msm_batt_gauge)
-		power_supply_changed(&msm_psy_batt);
-	if (priv)
-		power_supply_changed(&priv->psy);
+	power_supply_changed(&msm_psy_batt);
+	power_supply_changed(&priv->psy);
 
 	mutex_unlock(&msm_chg.status_lock);
 }
@@ -940,7 +892,8 @@ static int msm_chg_dequeue_event(struct msm_charger_event **event)
 	}
 	*event = &msm_chg.queue[msm_chg.head];
 	msm_chg.head = (msm_chg.head + 1) % MSM_CHG_MAX_EVENTS;
-	pr_debug("%s dequeueing %d\n", __func__, (*event)->event);
+	pr_debug("%s dequeueing %d from %s\n", __func__,
+				(*event)->event, (*event)->hw_chg->name);
 	msm_chg.queue_count--;
 	spin_unlock_irqrestore(&msm_chg.queue_lock, flags);
 	return 0;
@@ -954,11 +907,11 @@ static int msm_chg_enqueue_event(struct msm_hardware_charger *hw_chg,
 	spin_lock_irqsave(&msm_chg.queue_lock, flags);
 	if (msm_chg.queue_count == MSM_CHG_MAX_EVENTS) {
 		spin_unlock_irqrestore(&msm_chg.queue_lock, flags);
-		pr_err("%s: queue full cannot enqueue %d\n",
-				__func__, event);
+		pr_err("%s: queue full cannot enqueue %d from %s\n",
+				__func__, event, hw_chg->name);
 		return -EAGAIN;
 	}
-	pr_debug("%s queueing %d\n", __func__, event);
+	pr_debug("%s queueing %d from %s\n", __func__, event, hw_chg->name);
 	msm_chg.queue[msm_chg.tail].event = event;
 	msm_chg.queue[msm_chg.tail].hw_chg = hw_chg;
 	msm_chg.tail = (msm_chg.tail + 1)%MSM_CHG_MAX_EVENTS;
@@ -979,19 +932,17 @@ static void process_events(struct work_struct *work)
 	} while (!rc);
 }
 
-/* USB calls these to tell us how much charging current we should draw */
+/* USB calls these to tell us how much charging current we should draw*/
 void msm_charger_vbus_draw(unsigned int mA)
 {
-	if (usb_hw_chg_priv) {
-		usb_hw_chg_priv->max_source_current = mA;
+	if (usb_hw_chg_priv)
 		msm_charger_notify_event(usb_hw_chg_priv->hw_chg,
 						CHG_ENUMERATED_EVENT);
-	} else
-		/* remember the current, to be used when charger is ready */
-		usb_chg_current = mA;
+	else
+		pr_err("%s called early;charger isnt initialized\n", __func__);
 }
 
-static int __init determine_initial_batt_status(void)
+static void determine_initial_batt_status(void)
 {
 	if (is_battery_present())
 		if (is_battery_id_valid())
@@ -1004,27 +955,15 @@ static int __init determine_initial_batt_status(void)
 			msm_chg.batt_status = BATT_STATUS_ID_INVALID;
 	else
 		msm_chg.batt_status = BATT_STATUS_ABSENT;
-
-	if (is_batt_status_capable_of_charging())
-		handle_battery_inserted();
-
-	/* start updaing the battery powersupply every msm_chg.update_time
-	 * milliseconds */
-	queue_delayed_work(msm_chg.event_wq_thread,
-				&msm_chg.update_heartbeat_work,
-			      round_jiffies_relative(msecs_to_jiffies
-						     (msm_chg.update_time)));
-
-	pr_debug("%s:OK batt_status=%d\n", __func__, msm_chg.batt_status);
-	return 0;
 }
 
 static int __devinit msm_charger_probe(struct platform_device *pdev)
 {
+	int rc;
+
 	msm_chg.dev = &pdev->dev;
 	if (pdev->dev.platform_data) {
 		unsigned int milli_secs;
-
 		struct msm_charger_platform_data *pdata
 		    =
 		    (struct msm_charger_platform_data *)pdev->dev.platform_data;
@@ -1047,6 +986,7 @@ static int __devinit msm_charger_probe(struct platform_device *pdev)
 
 		msm_chg.max_voltage = pdata->max_voltage;
 		msm_chg.min_voltage = pdata->min_voltage;
+		msm_chg.resume_voltage = pdata->resume_voltage;
 		msm_chg.get_batt_capacity_percent =
 		    pdata->get_batt_capacity_percent;
 	}
@@ -1058,21 +998,42 @@ static int __devinit msm_charger_probe(struct platform_device *pdev)
 		msm_chg.max_voltage = DEFAULT_BATT_MAX_V;
 	if (msm_chg.min_voltage == 0)
 		msm_chg.min_voltage = DEFAULT_BATT_MIN_V;
+	if (msm_chg.resume_voltage == 0)
+		msm_chg.resume_voltage = DEFAULT_BATT_RESUME_V;
 	if (msm_chg.get_batt_capacity_percent == NULL)
 		msm_chg.get_batt_capacity_percent =
 		    msm_chg_get_batt_capacity_percent;
 
+	rc = power_supply_register(&pdev->dev, &msm_psy_batt);
+	if (rc < 0) {
+		dev_err(&pdev->dev, "%s: power_supply_register failed"
+			" rc=%d\n", __func__, rc);
+		return rc;
+	}
+
 	mutex_init(&msm_chg.status_lock);
 	INIT_DELAYED_WORK(&msm_chg.teoc_work, teoc);
+	INIT_DELAYED_WORK(&msm_chg.resume_work, resume_charging);
 	INIT_DELAYED_WORK(&msm_chg.update_heartbeat_work, update_heartbeat);
 
-	wake_lock_init(&msm_chg.wl, WAKE_LOCK_SUSPEND, "msm_charger");
+	determine_initial_batt_status();
+	if (is_batt_status_capable_of_charging())
+		handle_battery_inserted();
+
+	/* start updaing the battery powersupply every msm_chg.update_time
+	 * milliseconds */
+	queue_delayed_work(msm_chg.event_wq_thread,
+				&msm_chg.update_heartbeat_work,
+			      round_jiffies_relative(msecs_to_jiffies
+						     (msm_chg.update_time)));
+
+	pr_notice("%s:OK batt_status=%d\n", __func__, msm_chg.batt_status);
+
 	return 0;
 }
 
 static int __devexit msm_charger_remove(struct platform_device *pdev)
 {
-	wake_lock_destroy(&msm_chg.wl);
 	mutex_destroy(&msm_chg.status_lock);
 	power_supply_unregister(&msm_psy_batt);
 	return 0;
@@ -1090,7 +1051,7 @@ EXPORT_SYMBOL(msm_charger_notify_event);
 int msm_charger_register(struct msm_hardware_charger *hw_chg)
 {
 	struct msm_hardware_charger_priv *priv;
-	int rc = 0;
+	int rc;
 
 	if (!msm_chg.inited) {
 		pr_err("%s: msm_chg is NULL,Too early to register\n", __func__);
@@ -1124,11 +1085,8 @@ int msm_charger_register(struct msm_hardware_charger *hw_chg)
 	priv->psy.get_property = msm_power_get_property;
 
 	rc = power_supply_register(NULL, &priv->psy);
-	if (rc) {
-		dev_err(msm_chg.dev, "%s power_supply_register failed\n",
-			__func__);
-		goto out;
-	}
+	if (rc)
+		return rc;
 
 	priv->hw_chg = hw_chg;
 	priv->hw_chg_state = CHG_ABSENT_STATE;
@@ -1137,33 +1095,14 @@ int msm_charger_register(struct msm_hardware_charger *hw_chg)
 	list_add_tail(&priv->list, &msm_chg.msm_hardware_chargers);
 	mutex_unlock(&msm_chg.msm_hardware_chargers_lock);
 	hw_chg->charger_private = (void *)priv;
-	return 0;
 
-out:
-	kfree(priv);
-	return rc;
+	return 0;
 }
 EXPORT_SYMBOL(msm_charger_register);
 
 void msm_battery_gauge_register(struct msm_battery_gauge *batt_gauge)
 {
-	int rc;
-
-	if (msm_batt_gauge) {
-		msm_batt_gauge = batt_gauge;
-		pr_err("msm-charger %s multiple battery gauge called\n",
-								__func__);
-	} else {
-		rc = power_supply_register(msm_chg.dev, &msm_psy_batt);
-		if (rc < 0) {
-			dev_err(msm_chg.dev, "%s: power_supply_register failed"
-					" rc=%d\n", __func__, rc);
-			return;
-		}
-
-		msm_batt_gauge = batt_gauge;
-		determine_initial_batt_status();
-	}
+	msm_batt_gauge = batt_gauge;
 }
 EXPORT_SYMBOL(msm_battery_gauge_register);
 
@@ -1182,7 +1121,6 @@ int msm_charger_unregister(struct msm_hardware_charger *hw_chg)
 	list_del(&priv->list);
 	mutex_unlock(&msm_chg.msm_hardware_chargers_lock);
 	power_supply_unregister(&priv->psy);
-	kfree(priv);
 	return 0;
 }
 EXPORT_SYMBOL(msm_charger_unregister);
@@ -1192,9 +1130,6 @@ static int msm_charger_suspend(struct device *dev)
 	dev_dbg(msm_chg.dev, "%s suspended\n", __func__);
 	msm_chg.stop_update = 1;
 	cancel_delayed_work(&msm_chg.update_heartbeat_work);
-	mutex_lock(&msm_chg.status_lock);
-	handle_battery_removed();
-	mutex_unlock(&msm_chg.status_lock);
 	return 0;
 }
 
@@ -1208,9 +1143,6 @@ static int msm_charger_resume(struct device *dev)
 				&msm_chg.update_heartbeat_work,
 			      round_jiffies_relative(msecs_to_jiffies
 						     (msm_chg.update_time)));
-	mutex_lock(&msm_chg.status_lock);
-	handle_battery_inserted();
-	mutex_unlock(&msm_chg.status_lock);
 	return 0;
 }
 
