@@ -67,7 +67,6 @@ struct android_usb_platform_data {
 	 */
 	int num_functions;
 	char **functions;
-	int enable_rndis_msc;
 };
 
 /* Platform data for "usb_mass_storage" driver. */
