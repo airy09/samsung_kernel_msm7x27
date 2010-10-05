@@ -266,7 +266,7 @@ struct smd_half_channel {
 	unsigned char fHEAD;
 	unsigned char fTAIL;
 	unsigned char fSTATE;
-	unsigned char fUNUSED;
+	unsigned char fBLOCKREADINTR;
 	unsigned tail;
 	unsigned head;
 } __attribute__(( aligned(4), packed ));
