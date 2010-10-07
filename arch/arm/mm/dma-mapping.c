@@ -434,7 +434,6 @@ void ___dma_single_cpu_to_dev(const void *kaddr, size_t size,
 #ifdef CONFIG_OUTER_CACHE
 	unsigned long paddr;
 
-#ifdef CONFIG_OUTER_CACHE
 	BUG_ON(!virt_addr_valid(kaddr) || !virt_addr_valid(kaddr + size - 1));
 #endif
 
