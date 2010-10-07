@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -8,6 +8,11 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  */
 
 #ifndef __ARCH_ARM_MACH_MSM_IOMMU_HW_8XXX_H
@@ -15,14 +20,14 @@
 
 #define CTX_SHIFT 12
 
-#define GET_GLOBAL_REG(reg, base) (readl_relaxed((base) + (reg)))
+#define GET_GLOBAL_REG(reg, base) (readl((base) + (reg)))
 #define GET_CTX_REG(reg, base, ctx) \
-			(readl_relaxed((base) + (reg) + ((ctx) << CTX_SHIFT)))
+				(readl((base) + (reg) + ((ctx) << CTX_SHIFT)))
 
-#define SET_GLOBAL_REG(reg, base, val)	writel_relaxed((val), ((base) + (reg)))
+#define SET_GLOBAL_REG(reg, base, val)	writel((val), ((base) + (reg)))
 
 #define SET_CTX_REG(reg, base, ctx, val) \
-		writel_relaxed((val), ((base) + (reg) + ((ctx) << CTX_SHIFT)))
+			writel((val), ((base) + (reg) + ((ctx) << CTX_SHIFT)))
 
 /* Wrappers for numbered registers */
 #define SET_GLOBAL_REG_N(b, n, r, v) SET_GLOBAL_REG(b, ((r) + (n << 2)), (v))
@@ -38,19 +43,17 @@
 #define SET_CONTEXT_FIELD(b, c, r, F, v)	\
 	SET_FIELD(((b) + (r) + ((c) << CTX_SHIFT)), F##_MASK, F##_SHIFT, (v))
 
-#define GET_FIELD(addr, mask, shift) ((readl_relaxed(addr) >> (shift)) & (mask))
+#define GET_FIELD(addr, mask, shift)  ((readl(addr) >> (shift)) & (mask))
 
 #define SET_FIELD(addr, mask, shift, v) \
 do { \
-	int t = readl_relaxed(addr); \
-	writel_relaxed((t & ~((mask) << (shift))) + (((v) & \
-		       (mask)) << (shift)), addr);\
+	int t = readl(addr); \
+	writel((t & ~((mask) << (shift))) + (((v) & (mask)) << (shift)), addr);\
 } while (0)
 
 
 #define NUM_FL_PTE	4096
 #define NUM_SL_PTE	256
-#define NUM_TEX_CLASS	8
 
 /* First-level page table bits */
 #define FL_BASE_MASK		0xFFFFFC00
@@ -64,7 +67,6 @@ do { \
 #define FL_CACHEABLE		(1 << 3)
 #define FL_TEX0			(1 << 12)
 #define FL_OFFSET(va)		(((va) & 0xFFF00000) >> 20)
-#define FL_NG			(1 << 17)
 
 /* Second-level page table bits */
 #define SL_BASE_MASK_LARGE	0xFFFF0000
@@ -78,16 +80,6 @@ do { \
 #define SL_CACHEABLE		(1 << 3)
 #define SL_TEX0			(1 << 6)
 #define SL_OFFSET(va)		(((va) & 0xFF000) >> 12)
-#define SL_NG			(1 << 11)
-
-/* Memory type and cache policy attributes */
-#define MT_SO			0
-#define MT_DEV			1
-#define MT_NORMAL		2
-#define CP_NONCACHED		0
-#define CP_WB_WA		1
-#define CP_WT			2
-#define CP_WB_NWA		3
 
 /* Global register setters / getters */
 #define SET_M2VCBR_N(b, N, v)	 SET_GLOBAL_REG_N(M2VCBR_N, N, (b), (v))
@@ -504,6 +496,10 @@ do { \
 
 
 /* NMRR */
+#define NMRR_ICP(nmrr, n)	(((nmrr) & (3 << ((n) * 2))) >> ((n) * 2))
+#define NMRR_OCP(nmrr, n)	(((nmrr) & (3 << ((n) * 2 + 16))) >> \
+								((n) * 2 + 16))
+
 #define SET_ICPC0(b, c, v)	 SET_CONTEXT_FIELD(b, c, NMRR, ICPC0, v)
 #define SET_ICPC1(b, c, v)	 SET_CONTEXT_FIELD(b, c, NMRR, ICPC1, v)
 #define SET_ICPC2(b, c, v)	 SET_CONTEXT_FIELD(b, c, NMRR, ICPC2, v)
@@ -546,6 +542,8 @@ do { \
 
 
 /* PRRR */
+#define PRRR_NOS(prrr, n)	 ((prrr) & (1 << ((n) + 24)) ? 1 : 0)
+#define PRRR_MT(prrr, n)	 ((((prrr) & (3 << ((n) * 2))) >> ((n) * 2)))
 #define SET_MTC0(b, c, v)	 SET_CONTEXT_FIELD(b, c, PRRR, MTC0, v)
 #define SET_MTC1(b, c, v)	 SET_CONTEXT_FIELD(b, c, PRRR, MTC1, v)
 #define SET_MTC2(b, c, v)	 SET_CONTEXT_FIELD(b, c, PRRR, MTC2, v)
@@ -619,6 +617,20 @@ do { \
 /* V2PSR */
 #define SET_HIT(b, c, v)	 SET_CONTEXT_FIELD(b, c, V2PSR, HIT, v)
 #define SET_INDEX(b, c, v)	 SET_CONTEXT_FIELD(b, c, V2PSR, INDEX, v)
+
+
+/* V2Pxx UW UR PW PR */
+#define SET_V2PUW_INDEX(b, c, v) SET_CONTEXT_FIELD(b, c, V2PUW, V2Pxx_INDEX, v)
+#define SET_V2PUW_VA(b, c, v)	 SET_CONTEXT_FIELD(b, c, V2PUW, V2Pxx_VA, v)
+
+#define SET_V2PUR_INDEX(b, c, v) SET_CONTEXT_FIELD(b, c, V2PUR, V2Pxx_INDEX, v)
+#define SET_V2PUR_VA(b, c, v)	 SET_CONTEXT_FIELD(b, c, V2PUR, V2Pxx_VA, v)
+
+#define SET_V2PPW_INDEX(b, c, v) SET_CONTEXT_FIELD(b, c, V2PPW, V2Pxx_INDEX, v)
+#define SET_V2PPW_VA(b, c, v)	 SET_CONTEXT_FIELD(b, c, V2PPW, V2Pxx_VA, v)
+
+#define SET_V2PPR_INDEX(b, c, v) SET_CONTEXT_FIELD(b, c, V2PPR, V2Pxx_INDEX, v)
+#define SET_V2PPR_VA(b, c, v)	 SET_CONTEXT_FIELD(b, c, V2PPR, V2Pxx_VA, v)
 
 
 /* Context Register getters */
@@ -706,9 +718,7 @@ do { \
 #define GET_OCPC5(b, c)		GET_CONTEXT_FIELD(b, c, NMRR, OCPC5)
 #define GET_OCPC6(b, c)		GET_CONTEXT_FIELD(b, c, NMRR, OCPC6)
 #define GET_OCPC7(b, c)		GET_CONTEXT_FIELD(b, c, NMRR, OCPC7)
-#define NMRR_ICP(nmrr, n)	(((nmrr) & (3 << ((n) * 2))) >> ((n) * 2))
-#define NMRR_OCP(nmrr, n)	(((nmrr) & (3 << ((n) * 2 + 16))) >> \
-								((n) * 2 + 16))
+
 
 /* PAR */
 #define GET_FAULT(b, c)		GET_CONTEXT_FIELD(b, c, PAR, FAULT)
@@ -752,8 +762,6 @@ do { \
 #define GET_NOS5(b, c)		GET_CONTEXT_FIELD(b, c, PRRR, NOS5)
 #define GET_NOS6(b, c)		GET_CONTEXT_FIELD(b, c, PRRR, NOS6)
 #define GET_NOS7(b, c)		GET_CONTEXT_FIELD(b, c, PRRR, NOS7)
-#define PRRR_NOS(prrr, n)	 ((prrr) & (1 << ((n) + 24)) ? 1 : 0)
-#define PRRR_MT(prrr, n)	 ((((prrr) & (3 << ((n) * 2))) >> ((n) * 2)))
 
 
 /* RESUME */
@@ -806,6 +814,20 @@ do { \
 /* V2PSR */
 #define GET_HIT(b, c)		GET_CONTEXT_FIELD(b, c, V2PSR, HIT)
 #define GET_INDEX(b, c)		GET_CONTEXT_FIELD(b, c, V2PSR, INDEX)
+
+
+/* V2Pxx UW UR PW PR */
+#define GET_V2PUW_INDEX(b, c)	GET_CONTEXT_FIELD(b, c, V2PUW, V2Pxx_INDEX)
+#define GET_V2PUW_VA(b, c)	GET_CONTEXT_FIELD(b, c, V2PUW, V2Pxx_VA)
+
+#define GET_V2PUR_INDEX(b, c)	GET_CONTEXT_FIELD(b, c, V2PUR, V2Pxx_INDEX)
+#define GET_V2PUR_VA(b, c)	GET_CONTEXT_FIELD(b, c, V2PUR, V2Pxx_VA)
+
+#define GET_V2PPW_INDEX(b, c)	GET_CONTEXT_FIELD(b, c, V2PPW, V2Pxx_INDEX)
+#define GET_V2PPW_VA(b, c)	GET_CONTEXT_FIELD(b, c, V2PPW, V2Pxx_VA)
+
+#define GET_V2PPR_INDEX(b, c)	GET_CONTEXT_FIELD(b, c, V2PPR, V2Pxx_INDEX)
+#define GET_V2PPR_VA(b, c)	GET_CONTEXT_FIELD(b, c, V2PPR, V2Pxx_VA)
 
 
 /* Global Registers */
@@ -1553,8 +1575,8 @@ same as the fault fields in the FAR */
 #define FAULT_SS_MASK                    0x01
 
 /* If NO fault is present, the following
- * fields are in effect
- * (FAULT remains as before) */
+ fields are in effect */
+/* (FAULT remains as before) */
 #define PAR_NOFAULT_SS_MASK              0x01
 #define PAR_NOFAULT_MT_MASK              0x07
 #define PAR_NOFAULT_SH_MASK              0x01
@@ -1757,8 +1779,8 @@ same as the fault fields in the FAR */
 #define FAULT_SS_SHIFT                 30
 
 /* If NO fault is present, the following
- * fields are in effect
- * (FAULT remains as before) */
+ fields are in effect */
+/* (FAULT remains as before) */
 #define PAR_NOFAULT_SS_SHIFT           1
 #define PAR_NOFAULT_MT_SHIFT           4
 #define PAR_NOFAULT_SH_SHIFT           7
