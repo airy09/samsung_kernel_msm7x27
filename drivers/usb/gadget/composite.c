@@ -948,7 +948,7 @@ unknown:
 				tmp--;
 			}
 
-			if (!tmp)
+			if (tmp)
 				f = NULL;
 			break;
 
