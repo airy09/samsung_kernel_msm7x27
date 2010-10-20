@@ -1,7 +1,7 @@
 /* 
 * Copyright (C) ST-Ericsson AP Pte Ltd 2010 
 *
-* ISP1763 Linux OTG Controller driver : host
+* ISP1763 Linux HCD Controller driver : pehcd
 * 
 * This program is free software; you can redistribute it and/or modify it under the terms of 
 * the GNU General Public License as published by the Free Software Foundation; version 
@@ -21,9 +21,6 @@
 * Author : wired support <wired.support@stericsson.com>
 *
 */
-#ifdef CONFIG_ISO_SUPPORT
-void phcd_clean_periodic_ep(void);
-#endif
 
 #ifdef CONFIG_ISO_SUPPORT
 
@@ -214,7 +211,7 @@ phcd_iso_sitd_to_ptd(phci_hcd * hcd,
 	data_addr >>= 3;
 
 	/*  Set it to its location in the third DWORD */
-	td_info3 =( 0xffff&data_addr) << 8;
+	td_info3 = data_addr << 8;
 
 	/*
 	 * Set the frame number when this PTD will be sent for ISO OUT or IN
@@ -222,7 +219,7 @@ phcd_iso_sitd_to_ptd(phci_hcd * hcd,
 	 */
 	frame_number = sitd->framenumber;
 	frame_number = sitd->start_frame;
-	td_info3 |= (0xff& ((frame_number) << 3));
+	td_info3 |= ((frame_number) << 3);
 
 	/* Set the third DWORD */
 	iso_ptd->td_info3 = td_info3;
@@ -254,12 +251,6 @@ phcd_iso_sitd_to_ptd(phci_hcd * hcd,
 	iso_dbg(ISO_DBG_DATA, "[phcd_iso_itd_to_ptd]: DWORD5 = 0x%08x\n",
 		iso_ptd->td_info6);
 
-	/*printk(" [phcd_iso_itd_to_ptd]: DWORD0 = 0x%08x\n",iso_ptd->td_info1);
-	printk(" [phcd_iso_itd_to_ptd]: DWORD1 = 0x%08x\n",iso_ptd->td_info2);
-	printk(" [phcd_iso_itd_to_ptd]: DWORD2 = 0x%08x\n",iso_ptd->td_info3);
-	printk(" [phcd_iso_itd_to_ptd]: DWORD3 = 0x%08x\n",iso_ptd->td_info4);
-	printk(" [phcd_iso_itd_to_ptd]: DWORD4 = 0x%08x\n",iso_ptd->td_info5);
-	printk(" [phcd_iso_itd_to_ptd]: DWORD5 = 0x%08x\n",iso_ptd->td_info6);*/
 	iso_dbg(ISO_DBG_EXIT, "phcd_iso_itd_to_ptd exit\n");
 	return iso_ptd;
 }
@@ -448,14 +439,14 @@ phcd_iso_itd_to_ptd(phci_hcd * hcd,
 	data_addr >>= 3;
 
 	/*  Set it to its location in the third DWORD */
-	td_info3 = (data_addr&0xffff) << 8;
+	td_info3 = data_addr << 8;
 
 	/*
 	 * Set the frame number when this PTD will be sent for ISO OUT or IN
 	 * Bits 0 to 2 are don't care, only bits 3 to 7.
 	 */
 	frame_number = itd->framenumber;
-	td_info3 |= (0xff&(frame_number << 3));
+	td_info3 |= (frame_number << 3);
 
 	/* Set the third DWORD */
 	iso_ptd->td_info3 = td_info3;
@@ -662,11 +653,7 @@ phcd_iso_sitd_fill(phci_hcd * hcd,
 		return -ENOMEM;
 	}
 #else
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
-	qhead=urb->hcpriv;
-#else
 	qhead = urb->ep->hcpriv;
-#endif
 	if (qhead) {
 
 		mem_addr->phy_addr = qhead->memory_addr.phy_addr + offset;
@@ -783,11 +770,7 @@ phcd_iso_itd_fill(phci_hcd * hcd,
 		return -ENOMEM;
 	}
 #else
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,24)
 	qhead = urb->ep->hcpriv;
-#else
-	qhead=urb->hcpriv;
-#endif
 	if (qhead) {
 
 		mem_addr->phy_addr = qhead->memory_addr.phy_addr + offset;
@@ -1205,10 +1188,10 @@ void
 phcd_clean_iso_qh(phci_hcd * hcd, struct ehci_qh *qh)
 {
 	unsigned int i = 0;
-	u16 skipmap=0;
-	struct ehci_sitd *sitd;
+	u16 skipmap;
+	struct ehci_sitd *sitd, *current_sitd;
 	struct ehci_itd *itd;
-
+	struct urb *urb = NULL;
 	iso_dbg(ISO_DBG_ERR, "phcd_clean_iso_qh \n");
 	if (!qh){
 		return;
@@ -1275,7 +1258,11 @@ phcd_clean_iso_qh(phci_hcd * hcd, struct ehci_qh *qh)
 
 		}
 	}
-
+/*	if(urb){
+		printk("urb shutdown \n");
+	              urb->status =-ECONNRESET;
+            		usb_hcd_giveback_urb (&hcd->usb_hcd, urb, urb->status);
+            	}*/
 
 }
 
@@ -1297,32 +1284,20 @@ phcd_clean_iso_qh(phci_hcd * hcd, struct ehci_qh *qh)
  *  - Store URB into a queue
  *  - If ther's enough free PTD slots , repairing the PTDs
  */
-void phcd_clean_periodic_ep(void){
-	periodic_ep[0] = NULL;
-	periodic_ep[1] = NULL;
-}
+
 
 int
 phcd_clean_urb_pending(phci_hcd * hcd, struct urb *urb)
 {
 	unsigned int i = 0;
+	int retval = 0;
 	struct ehci_qh *qhead;
-	struct ehci_sitd *sitd;
+	struct list_head *sitd_itd_list, *position, *temp;
+	struct ehci_sitd *sitd, *current_sitd;
 	struct ehci_itd *itd;
-	u16 skipmap=0;;
+	u16 skipmap;
 
 	iso_dbg(ISO_DBG_ENTRY, "[phcd_clean_urb_pending] : Enter\n");
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
-	qhead=urb->hcpriv;
-	if (periodic_ep[0] == qhead->ep) {
-		periodic_ep[0] = NULL;
-
-	}
-
-	if (periodic_ep[1] == qhead->ep) {
-		periodic_ep[1] = NULL;
-	}
-#else	
 	qhead = urb->ep->hcpriv;
 	if (periodic_ep[0] == urb->ep) {
 		periodic_ep[0] = NULL;
@@ -1332,7 +1307,6 @@ phcd_clean_urb_pending(phci_hcd * hcd, struct urb *urb)
 	if (periodic_ep[1] == urb->ep) {
 		periodic_ep[1] = NULL;
 	}
-#endif	
 	if (!qhead) {
 		return 0;
 	}
@@ -1404,18 +1378,16 @@ phcd_store_urb_pending(phci_hcd * hcd, int index, struct urb *urb, int *status)
 	unsigned int uiNumofPTDs = 0;
 	unsigned int uiNumofSlots = 0;
 	unsigned int uiMult = 0;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,24)
+
 	iso_dbg(ISO_DBG_ENTRY, "[phcd_store_urb_pending] : Enter\n");
 	if (urb != NULL) {
 		if (periodic_ep[0] != urb->ep && periodic_ep[1] != urb->ep) {
 			if (periodic_ep[0] == NULL) {
-			//	printk("storing in 0 %x %x\n",urb,urb->pipe);
+				printk("storing in 0\n");
 				periodic_ep[0] = urb->ep;
 			} else if (periodic_ep[1] == NULL) {
 				printk("storing in 1\n");
 				periodic_ep[1] = urb->ep;
-				usb_hcd_link_urb_to_ep(&(hcd->usb_hcd), urb);
-				return -1;
 			} else {
 				iso_dbg(ISO_DBG_ERR,
 					"Support only 2 ISO endpoints simultaneously \n");
@@ -1432,7 +1404,7 @@ phcd_store_urb_pending(phci_hcd * hcd, int index, struct urb *urb, int *status)
 
 		iso_dbg(ISO_DBG_ENTRY,
 			"[phcd_store_urb_pending] : getting urb from list \n");
-		if (index > 0 && index < 2) {
+		if (index > 0 && index < 3) {
 			if (periodic_ep[index - 1]){
 				urb = container_of(periodic_ep[index - 1]->
 					urb_list.next, struct urb,
@@ -1446,7 +1418,6 @@ phcd_store_urb_pending(phci_hcd * hcd, int index, struct urb *urb, int *status)
 
 	}
 
-
 	if ((urb != NULL && (urb->ep->urb_list.next == &urb->urb_list))){
 		iso_dbg(ISO_DBG_DATA,
 			"[phcd_store_urb_pending] : periodic_sched : %d\n",
@@ -1454,24 +1425,17 @@ phcd_store_urb_pending(phci_hcd * hcd, int index, struct urb *urb, int *status)
 		iso_dbg(ISO_DBG_DATA,
 			"[phcd_store_urb_pending] : number_of_packets : %d\n",
 			urb->number_of_packets);
-		iso_dbg(ISO_DBG_DATA,
-			"[phcd_store_urb_pending] : Maximum PacketSize : %d\n",
-			usb_maxpacket(urb->dev,urb->pipe, usb_pipeout(urb->pipe)));
 		/*if enough free slots */
 		if (urb->dev->speed == USB_SPEED_FULL) {	/*for FULL SPEED */
-	//		if (hcd->periodic_sched < 
-		//		MAX_PERIODIC_SIZE - urb->number_of_packets) {
-			if(1){
-				if (phcd_submit_iso(hcd, 
-					#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
-						struct usb_host_endpoint *ep,
-					#endif
-						urb,
-						( unsigned long *) &status) == 0) {
+			if (hcd->periodic_sched < 
+				MAX_PERIODIC_SIZE - urb->number_of_packets) {
+				if (phcd_submit_iso(hcd, urb, 
+					(unsigned int *) &status) == 0) {
 					pehci_hcd_iso_schedule(hcd, urb);
-				} else{
-				//*status = 0;
 				}
+
+			} else{
+				*status = 0;
 			}
 		} else if (urb->dev->speed == USB_SPEED_HIGH) {	/*for HIGH SPEED */
 			/*number of slots for 1 PTD */
@@ -1502,11 +1466,8 @@ phcd_store_urb_pending(phci_hcd * hcd, int index, struct urb *urb, int *status)
 			if (hcd->periodic_sched <=
 				MAX_PERIODIC_SIZE - uiNumofPTDs) {
 
-				if (phcd_submit_iso(hcd,
-					#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
-						struct usb_host_endpoint *ep,
-					#endif
-					urb, (unsigned long *) &status)== 0) {
+				if (phcd_submit_iso(hcd, urb, (int *) &status)
+					== 0) {
 
 					pehci_hcd_iso_schedule(hcd, urb);
 				}
@@ -1518,7 +1479,7 @@ phcd_store_urb_pending(phci_hcd * hcd, int index, struct urb *urb, int *status)
 		iso_dbg(ISO_DBG_DATA,
 			"[phcd_store_urb_pending] : nextUrb is NULL\n");
 	}
-#endif
+
 	iso_dbg(ISO_DBG_ENTRY, "[phcd_store_urb_pending] : Exit\n");
 	return 0;
 }
@@ -1543,8 +1504,8 @@ phcd_store_urb_pending(phci_hcd * hcd, int index, struct urb *urb, int *status)
  */
 unsigned long
 phcd_submit_iso(phci_hcd * hcd,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
-	struct usb_host_endpoint *ep,
+#ifdef LINUX_2620
+		struct usb_host_endpoint *ep,
 #else
 #endif
 		struct urb *urb, unsigned long *status)
@@ -1558,7 +1519,7 @@ phcd_submit_iso(phci_hcd * hcd,
 	unsigned long ep_in, max_pkt, mult;
 	unsigned long bus_time, high_speed, start_frame;
 	unsigned long temp;
-	unsigned long packets;
+	unsigned long flags, packets;
 	/*for high speed device */
 	unsigned int iMicroIndex = 0;
 	unsigned int iNumofSlots = 0;
@@ -1590,7 +1551,7 @@ phcd_submit_iso(phci_hcd * hcd,
 	 * Take the endpoint, if there is still no memory allocated
 	 * for it allocate some and indicate this is for ISO.
 	 */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
+#ifdef LINUX_2620
 	qhead = ep->hcpriv;
 #else
 	qhead = urb->ep->hcpriv;
@@ -1606,16 +1567,13 @@ phcd_submit_iso(phci_hcd * hcd,
 
 		qhead->type = TD_PTD_BUFF_TYPE_ISTL;
 		INIT_LIST_HEAD(&qhead->periodic_list.sitd_itd_head);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
-		qhead->ep=ep;
+
+#ifdef LINUX_2620
 		ep->hcpriv = qhead;
-		urb->hcpriv=qhead;
 #else
 		urb->ep->hcpriv = qhead;
 #endif
 	}
-
-		urb->hcpriv=qhead;
 
 	/* if(!qhead) */
 	/*
@@ -1638,7 +1596,7 @@ phcd_submit_iso(phci_hcd * hcd,
 
 	if (urb->dev->speed == USB_SPEED_FULL) {
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
+#ifdef LINUX_2620
 		if (urb->bandwidth == 0) {
 			bus_time = usb_check_bandwidth(urb->dev, urb);
 			if (bus_time < 0) {
@@ -1664,7 +1622,7 @@ phcd_submit_iso(phci_hcd * hcd,
 		bus_time += BW_HOST_DELAY;
 		bus_time = NS_TO_US(bus_time);
 	}
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
+#ifdef LINUX_2620
 	usb_claim_bandwidth(urb->dev, urb, bus_time, 1);
 #else
 #endif
@@ -1745,7 +1703,6 @@ phcd_submit_iso(phci_hcd * hcd,
 		if (urb->dev->speed != USB_SPEED_HIGH){
 			qhead->next_uframe =
 				start_frame + urb->number_of_packets;
-				iNumofPTDs=urb->number_of_packets;
 		} else {
 			qhead->next_uframe = start_frame + iNumofPTDs;
 		}
@@ -1760,9 +1717,6 @@ phcd_submit_iso(phci_hcd * hcd,
 		(int) max_pkt);
 
 #ifdef COMMON_MEMORY
-	if(urb->number_of_packets>8 && urb->dev->speed!=USB_SPEED_HIGH)
-		phci_hcd_mem_alloc(8*max_pkt, &qhead->memory_addr, 0);
-	else
 	phci_hcd_mem_alloc(urb->transfer_buffer_length, &qhead->memory_addr, 0);
 	if (urb->transfer_buffer_length && ((qhead->memory_addr.phy_addr == 0)
 		|| (qhead->memory_addr.virt_addr ==0))) {
@@ -1774,8 +1728,6 @@ phcd_submit_iso(phci_hcd * hcd,
 
 	if (urb->dev->speed != USB_SPEED_HIGH) {
 		iNumofPks = urb->number_of_packets;
-		qhead->totalptds=urb->number_of_packets;
-		qhead->actualptds=0;
 
 		/* Make as many tds as number of packets */
 		for (packets = 0; packets < urb->number_of_packets; packets++) {
@@ -1880,7 +1832,6 @@ phcd_submit_iso(phci_hcd * hcd,
 
 			prev_sitd = sitd;
 
-			if(packets<8){  //bcs of memory constraint , we use only first 8 PTDs if number_of_packets is more than 8.
 			/*
 			 * Allocate an ISO PTD from the ISO PTD map list and
 			 * set the equivalent bit of the allocated PTD to active
@@ -1909,14 +1860,12 @@ phcd_submit_iso(phci_hcd * hcd,
 				}
 				return *status;
 			}
-					qhead->actualptds++;
-			}
+
 			/* Insert this td into the periodic list */
 
 			sitd_itd_list = &qhead->periodic_list.sitd_itd_head;
 			list_add_tail(&sitd->sitd_list, sitd_itd_list);
 			qhead->periodic_list.high_speed = 0;
-			if(sitd->sitd_index!=TD_PTD_INV_PTD_INDEX)
 			qhead->periodic_list.ptdlocation |=
 				0x1 << sitd->sitd_index;
 			/* Inidcate that a new SITD have been scheduled */
