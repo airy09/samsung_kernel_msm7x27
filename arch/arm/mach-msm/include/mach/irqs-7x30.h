@@ -1,4 +1,4 @@
-/* Copyright (c) 2009, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2009-2010, Code Aurora Forum. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -161,5 +161,7 @@
 #define NR_SIRC_IRQS		0
 #define NR_GPIO_IRQS		182
 #define NR_BOARD_IRQS		64
+
+#define INT_ADSP_A11_SMSM	INT_ADSP_A11
 
 #endif /* __ASM_ARCH_MSM_IRQS_7X30_H */
