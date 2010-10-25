@@ -46,10 +46,6 @@
 /* Meaning: set the count of blocks to reserve for checkpointing */
 #define CONFIG_YAFFS_CHECKPOINT_RESERVED_BLOCKS 10
 
-/* Default: Selected */
-/* Meaning: Enable XATTR support */
-#define CONFIG_YAFFS_XATTR
-
 /*
 Older-style on-NAND data format has a "pageStatus" byte to record
 chunk/page state.  This byte is zeroed when the page is discarded.
