@@ -16,8 +16,16 @@
  */
 
 #include <linux/linkage.h>
+#include <linux/threads.h>
 #include <asm/assembler.h>
-#include <asm/vfpmacros.h>
+
+#ifdef CONFIG_MSM_CPU_AVS
+/* 11 general purpose registers (r4-r14), 10 cp15 registers, 3 AVS registers */
+#define CPU_SAVED_STATE_SIZE (4 * 11 + 4 * 10 + 4 * 3)
+#else
+/* 11 general purpose registers (r4-r14), 10 cp15 registers */
+#define CPU_SAVED_STATE_SIZE (4 * 11 + 4 * 10)
+#endif
 
 ENTRY(msm_arch_idle)
 	wfi
@@ -29,6 +37,12 @@ ENTRY(msm_pm_collapse)
 #endif
 
 	ldr     r0, =saved_state
+#if defined(CONFIG_NR_CPUS) && (CONFIG_NR_CPUS >= 2)
+	mrc	p15, 0, r1, c0, c0, 5	/* MPIDR */
+	ands	r1, r1, #15		/* What CPU am I */
+	addne	r0, r0, #CPU_SAVED_STATE_SIZE
+#endif
+
 	stmia   r0!, {r4-r14}
 	mrc     p15, 0, r1, c1, c0, 0 /* MMU control */
 	mrc     p15, 0, r2, c2, c0, 0 /* TTBR0 */
@@ -41,12 +55,20 @@ ENTRY(msm_pm_collapse)
 	mrc     p15, 0, r9, c13, c0, 3 /* TPIDRURO */
 	mrc     p15, 0, ip, c13, c0, 1 /* context ID */
 	stmia   r0!, {r1-r9, ip}
+#ifdef CONFIG_MSM_CPU_AVS
+	mrc     p15, 7, r1, c15, c1, 7 /* AVSCSR is the Adaptive Voltage Scaling
+	                                * Control and Status Register */
+	mrc     p15, 7, r2, c15, c0, 6 /* AVSDSCR is the Adaptive Voltage
+	                                * Scaling Delay Synthesizer Control
+					* Register */
+	mrc     p15, 7, r3, c15, c1, 0 /* TSCSR is the Temperature Status and
+	                                * Control Register
+					*/
+	stmia   r0!, {r1-r3}
+#endif
 
-#ifdef CONFIG_VFP
-	VFPFSTMIA r0, r1              /* Save VFP working registers */
-	fmrx    r1, fpexc
-	fmrx    r2, fpscr
-	stmia   r0!, {r1, r2}         /* Save VFP state registers */
+#ifdef CONFIG_MSM_JTAG_V7
+	bl      msm_save_jtag_debug
 #endif
 	bl      v7_flush_dcache_all
 
@@ -65,7 +87,13 @@ ENTRY(msm_pm_collapse)
 	cpsie   f
 #endif
 
-	ldr     r0, =saved_state         /* restore registers */
+	ldr     r0, =saved_state        /* restore registers */
+#if defined(CONFIG_NR_CPUS) && (CONFIG_NR_CPUS >= 2)
+	mrc	p15, 0, r1, c0, c0, 5	/* MPIDR */
+	ands	r1, r1, #15		/* What CPU am I */
+	addne	r0, r0, #CPU_SAVED_STATE_SIZE
+#endif
+
 	ldmfd   r0, {r4-r14}
 	mov     r0, #0                   /* return power collapse failed */
 	bx      lr
@@ -80,50 +108,22 @@ ENTRY(msm_pm_collapse_exit)
 	mov     r1, #'A'
 	str     r1, [r0, #0x00C]
 #endif
-
-#if 0
-        //; REMOVE FOLLOWING THREE INSTRUCTIONS WHEN POWER COLLAPSE IS ENA
-        //;Make sure the DBGOSLSR[LOCK] bit is cleared to allow access to the debug registers
-        //; Writing anything but the "secret code" to the DBGOSLAR clears the DBGOSLSR[LOCK] bit
-        MCR    p14, 0, r0, c1, c0, 4       //; WCP14_DBGOSLAR r0
-
-
-        //; Read the DBGPRSR to clear the DBGPRSR[STICKYPD]
-        //; Any read to DBGPRSR clear the STICKYPD bit
-        //; ISB guarantees the read completes before attempting to
-        //; execute a CP14 instruction.
-        MRC    p14, 0, r3, c1, c5, 4       //; RCP14_DBGPRSR r3
-        ISB
-#endif
-
-#if 0 /* allow jtag reconnect */
-1:
-	b	1b
-#endif
-
-	bl	__cpu_early_init
-
 	ldr     r1, =saved_state_end
 	ldr     r2, =msm_pm_collapse_exit
 	adr     r3, msm_pm_collapse_exit
 	add     r1, r1, r3
 	sub     r1, r1, r2
-#ifdef CONFIG_VFP
-	mrc     p15, 0, r2, c1, c0, 2 /* Read CP Access Control Register */
-	orr     r2, r2, #0x00F00000   /* Enable full access for p10,11 */
-	mcr     p15, 0, r2, c1, c0, 2 /* Write CPACR */
-	isb
-	mov     r2, #0x40000000       /* Enable VFP */
-	fmxr    fpexc, r2
-	isb
-	ldmdb   r1!, {r2, r3}         /* Read saved VFP state registers */
-	sub     r1, r1, #32*8         /* Jump to start of vfp regs area */
-	VFPFLDMIA r1, r4              /* Restore VFP working registers,
-				       * r1 incremented to end of vfp
-				       * regs area */
-	sub     r1, r1, #32*8         /* Jump back to start of vfp regs area */
-	fmxr    fpscr, r3             /* Restore FPSCR */
-	fmxr    fpexc, r2             /* Restore FPEXC last */
+#if defined(CONFIG_NR_CPUS) && (CONFIG_NR_CPUS >= 2)
+	mrc	p15, 0, r2, c0, c0, 5	/* MPIDR */
+	ands	r2, r2, #15		/* What CPU am I */
+	subeq	r1, r1, #CPU_SAVED_STATE_SIZE
+#endif
+
+#ifdef CONFIG_MSM_CPU_AVS
+	ldmdb   r1!, {r2-r4}
+	mcr     p15, 7, r4, c15, c1, 0 /* TSCSR */
+	mcr     p15, 7, r3, c15, c0, 6 /* AVSDSCR */
+	mcr     p15, 7, r2, c15, c1, 7 /* AVSCSR */
 #endif
 	ldmdb   r1!, {r2-r11}
 	mcr     p15, 0, r4, c3, c0, 0 /* dacr */
@@ -137,37 +137,25 @@ ENTRY(msm_pm_collapse_exit)
 	mcr     p15, 0, r11, c13, c0, 1 /* context ID */
 	isb
 	ldmdb   r1!, {r4-r14}
-	/* Add 1:1 map in the PMD to allow smooth switch when turning on MMU */
-	and     r3, r3, #~0x7F  /* mask off lower 7 bits of TTB */
-	adr     r0, msm_pm_mapped_pa /* get address of the mapped instr */
-	lsr     r1, r0, #20     /* get the addr range of addr in MB */
-	lsl     r1, r1, #2      /* multiply by 4 to get to the pg index */
-	add     r3, r3, r1      /* pgd + pgd_index(addr) */
-	ldr     r1, [r3]        /* save current entry to r1 */
-	lsr     r0, #20         /* align current addr to 1MB boundary */
-	lsl     r0, #20
-	/* Create new entry for this 1MB page */
-	orr     r0, r0, #0x4     /* PMD_SECT_BUFFERED */
-	orr     r0, r0, #0x400   /* PMD_SECT_AP_WRITE */
-	orr     r0, r0, #0x2     /* PMD_TYPE_SECT|PMD_DOMAIN(DOMAIN_KERNEL) */
-	str     r0, [r3]         /* put new entry into the MMU table */
-	mcr     p15, 0, r3, c7, c10, 1  /* flush_pmd */
-	dsb
+	ldr	r0, =msm_pm_pc_pgd
+	ldr	r1, =msm_pm_collapse_exit
+	adr	r3, msm_pm_collapse_exit
+	add	r0, r0, r3
+	sub	r0, r0, r1
+	ldr	r0, [r0]
+	mrc     p15, 0, r1, c2, c0, 0 /* save current TTBR0 */
+	and	r3, r1, #0x7f /* mask to get TTB flags */
+	orr	r0, r0, r3 /* add TTB flags to switch TTBR value */
+	mcr     p15, 0, r0, c2, c0, 0 /* temporary switch TTBR0 */
 	isb
 	mcr     p15, 0, r2, c1, c0, 0   /* MMU control */
 	isb
 msm_pm_mapped_pa:
 	/* Switch to virtual */
-	adr     r2, msm_pm_pa_to_va
 	ldr     r0, =msm_pm_pa_to_va
 	mov     pc, r0
 msm_pm_pa_to_va:
-	sub     r0, r0, r2
-	/* Restore r1 in MMU table */
-	add     r3, r3, r0
-	str     r1, [r3]
-	mcr     p15, 0, r3, c7, c10, 1  /* flush_pmd */
-	dsb
+	mcr     p15, 0, r1, c2, c0, 0 /* restore TTBR0 */
 	isb
 	mcr     p15, 0, r3, c8, c7, 0   /* UTLBIALL */
 	mcr     p15, 0, r3, c7, c5, 6   /* BPIALL */
@@ -175,6 +163,9 @@ msm_pm_pa_to_va:
 	isb
 	stmfd   sp!, {lr}
 	bl      v7_flush_kern_cache_all
+#ifdef CONFIG_MSM_JTAG_V7
+	bl      msm_restore_jtag_debug
+#endif
 	ldmfd   sp!, {lr}
 	mov     r0, #1
 	bx      lr
@@ -185,15 +176,38 @@ msm_pm_pa_to_va:
 	nop
 1:	b       1b
 
+ENTRY(msm_pm_boot_entry)
+	mrc     p15, 0, r0, c0, c0, 5    /* MPIDR                          */
+	and     r0, r0, #15              /* what CPU am I                  */
+
+	ldr     r1, =msm_pm_boot_vector
+	ldr     r2, =msm_pm_boot_entry
+	adr     r3, msm_pm_boot_entry
+	add     r1, r1, r3               /* translate virt to phys addr    */
+	sub     r1, r1, r2
+
+	add     r1, r1, r0, LSL #2       /* locate boot vector for our cpu */
+	ldr     pc, [r1]                 /* jump                           */
+
+ENTRY(msm_pm_write_boot_vector)
+	ldr     r2, =msm_pm_boot_vector
+	add     r2, r2, r0, LSL #2       /* locate boot vector for our cpu */
+	str     r1, [r2]
+	bx      lr
 
 	.data
 
+	.globl msm_pm_pc_pgd
+msm_pm_pc_pgd:
+	.long	0x0
+
 saved_state:
-	.space  4 * 11 /* r4-14 */
-	.space  4 * 10  /* cp15 */
-#ifdef CONFIG_VFP
-	.space  8 * 32 /* VFP working registers */
-	.space  4 * 2  /* VFP state registers */
+#if defined(CONFIG_NR_CPUS) && (CONFIG_NR_CPUS >= 2)
+	.space	CPU_SAVED_STATE_SIZE * 2 /* This code only supports 2 cores */
+#else
+	.space	CPU_SAVED_STATE_SIZE
 #endif
 saved_state_end:
 
+msm_pm_boot_vector:
+	.space  4 * NR_CPUS
