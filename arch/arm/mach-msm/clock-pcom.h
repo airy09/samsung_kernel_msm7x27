@@ -72,13 +72,8 @@
 #define P_USB_HS_P_CLK	37  /* High speed USB pbus clock */
 #define P_USB_OTG_CLK	38  /* Full speed USB clock */
 #define P_VDC_CLK	39  /* Video controller clock */
-#if !defined(CONFIG_MSM_LEGACY_7X00A_AMSS)
-#define P_VFE_MDC_CLK	40  /* VFE MDDI client clock */
-#define P_VFE_CLK	41  /* Camera / Video Front End clock */
-#else/* For radio code base others */
-#define P_VFE_MDC_CLK	41  /* VFE MDDI client clock */
-#define P_VFE_CLK	40  /* Camera / Video Front End clock */
-#endif
+#define P_VFE_MDC_CLK	40  /* Camera / Video Front End clock */
+#define P_VFE_CLK	41  /* VFE MDDI client clock */
 #define P_MDP_LCDC_PCLK_CLK	42
 #define P_MDP_LCDC_PAD_PCLK_CLK 43
 #define P_MDP_VSYNC_CLK	44
@@ -94,7 +89,7 @@
 #define P_USB_HS2_CORE_CLK	54  /* High speed USB 2 core clock */
 #define P_USB_HS3_CORE_CLK	55  /* High speed USB 3 core clock */
 #define P_CAM_M_CLK		56
-#define P_QUP_I2C_P_CLK		57
+#define P_CAMIF_PAD_P_CLK	57
 #define P_GRP_2D_CLK		58
 #define P_GRP_2D_P_CLK		59
 #define P_I2S_CLK		60
@@ -137,12 +132,14 @@
 #define P_CSI1_P_CLK		97
 #define P_GSBI_CLK		98
 #define P_GSBI_P_CLK		99
+#define P_CE_CLK		100 /* Crypto engine */
+#define P_CODEC_SSBI_CLK	101
 
-#define P_NR_CLKS		100
+#define P_NR_CLKS		102
 
 struct clk_ops;
-extern struct clk_ops clk_ops_pcom;
-enum clk_reset_action;
+extern struct clk_ops clk_ops_remote;
+extern struct clk_ops clk_ops_pcom_div2;
 
 int pc_clk_reset(unsigned id, enum clk_reset_action action);
 
@@ -150,7 +147,7 @@ int pc_clk_reset(unsigned id, enum clk_reset_action action);
 	.name = clk_name, \
 	.id = P_##clk_id, \
 	.remote_id = P_##clk_id, \
-	.ops = &clk_ops_pcom, \
+	.ops = &clk_ops_remote, \
 	.flags = clk_flags, \
 	.dev = clk_dev, \
 	.dbg_name = #clk_id, \
