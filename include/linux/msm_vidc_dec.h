@@ -65,7 +65,7 @@
 /* Command is not implemented by the driver.  */
 #define VDEC_S_BUSY	(VDEC_S_BASE + 13)
 
-#define VDEC_INTF_VER   	1
+#define VDEC_INTF_VER	1
 #define VDEC_MSG_BASE	0x0000000
 /* Codes to identify asynchronous message responses and events that driver
   wants to communicate to the app.*/
@@ -203,6 +203,21 @@ struct vdec_ioctl_msg {
 #define VDEC_IOCTL_GET_NUMBER_INSTANCES \
 	_IOR(VDEC_IOCTL_MAGIC, 27, struct vdec_ioctl_msg)
 
+#define VDEC_IOCTL_SET_PICTURE_ORDER \
+	_IOW(VDEC_IOCTL_MAGIC, 28, struct vdec_ioctl_msg)
+
+#define VDEC_IOCTL_SET_FRAME_RATE \
+	_IOW(VDEC_IOCTL_MAGIC, 29, struct vdec_ioctl_msg)
+
+#define VDEC_IOCTL_SET_H264_MV_BUFFER \
+	_IOW(VDEC_IOCTL_MAGIC, 30, struct vdec_ioctl_msg)
+
+#define VDEC_IOCTL_FREE_H264_MV_BUFFER \
+	_IOW(VDEC_IOCTL_MAGIC, 31, struct vdec_ioctl_msg)
+
+#define VDEC_IOCTL_GET_MV_BUFFER_SIZE  \
+	_IOR(VDEC_IOCTL_MAGIC, 32, struct vdec_ioctl_msg)
+
 enum vdec_picture {
 	PICTURE_TYPE_I,
 	PICTURE_TYPE_P,
@@ -222,17 +237,17 @@ struct vdec_allocatorproperty {
 	uint32_t mincount;
 	uint32_t maxcount;
 	uint32_t actualcount;
-	uint32_t buffer_size;
+	size_t buffer_size;
 	uint32_t alignment;
 	uint32_t buf_poolid;
 };
 
 struct vdec_bufferpayload {
-	void __user *addr;
-	size_t sz;
+	void __user *bufferaddr;
+	size_t buffer_len;
 	int pmem_fd;
 	size_t offset;
-	size_t mmaped_sz;
+	size_t mmaped_size;
 };
 
 struct vdec_setbuffer_cmd {
@@ -460,9 +475,14 @@ enum vdec_interlaced_format {
 	VDEC_InterlaceInterleaveFrameBottomFieldFirst = 0x4
 };
 
-enum vdec_output_format {
+enum vdec_output_fromat {
 	VDEC_YUV_FORMAT_NV12 = 0x1,
 	VDEC_YUV_FORMAT_TILE_4x2 = 0x2
+};
+
+enum vdec_output_order {
+	VDEC_ORDER_DISPLAY = 0x1,
+	VDEC_ORDER_DECODE = 0x2
 };
 
 struct vdec_picsize {
@@ -473,21 +493,21 @@ struct vdec_picsize {
 };
 
 struct vdec_seqheader {
-	void *addr;
-	size_t sz;
+	void __user *ptr_seqheader;
+	size_t seq_header_len;
 	int pmem_fd;
 	size_t pmem_offset;
 };
 
 struct vdec_mberror {
-	uint8_t *ptr_errormap;
-	uint32_t err_mapsize;
+	void __user *ptr_errormap;
+	size_t err_mapsize;
 };
 
 struct vdec_input_frameinfo {
-	void __user *user_addr;
+	void __user *bufferaddr;
 	size_t offset;
-	size_t data_len;
+	size_t datalen;
 	uint32_t flags;
 	int64_t timestamp;
 	void *client_data;
@@ -503,10 +523,9 @@ struct vdec_framesize {
 };
 
 struct vdec_output_frameinfo {
-	phys_addr_t phys_addr;
-	void __user *user_addr;
-	uint32_t offset;
-	uint32_t len;
+	void __user *bufferaddr;
+	size_t offset;
+	size_t len;
 	uint32_t flags;
 	int64_t time_stamp;
 	enum vdec_picture pic_type;
@@ -524,6 +543,26 @@ struct vdec_msginfo {
 	uint32_t status_code;
 	uint32_t msgcode;
 	union vdec_msgdata msgdata;
-	uint32_t msgdatasize;
+	size_t msgdatasize;
 };
+
+struct vdec_framerate {
+	unsigned long fps_denominator;
+	unsigned long fps_numerator;
+};
+
+struct vdec_h264_mv{
+	size_t size;
+	int count;
+	int pmem_fd;
+	int offset;
+};
+
+struct vdec_mv_buff_size{
+	int width;
+	int height;
+	int size;
+	int alignment;
+};
+
 #endif /* end of macro _VDECDECODER_H_ */
