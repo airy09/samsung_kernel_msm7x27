@@ -21,6 +21,8 @@
 #include <linux/mmc/sdio.h>
 #include <linux/mmc/sdio_func.h>
 
+#include <asm/mach-types.h>
+
 #include "sdio_cis.h"
 #include "sdio_ops.h"
 
@@ -55,7 +57,7 @@ static int cistpl_vers_1(struct mmc_card *card, struct sdio_func *func,
 
 	for (i = 0; i < nr_strings; i++) {
 		buffer[i] = string;
-		strlcpy(string, buf, sizeof(string));
+		strcpy(string, buf);
 		string += strlen(string) + 1;
 		buf += strlen(buf) + 1;
 	}
@@ -271,11 +273,10 @@ static int sdio_read_cis(struct mmc_card *card, struct sdio_func *func)
 
 		/* null entries have no link field or data */
 		if (tpl_code == 0x00) {
-			if (card->cis.vendor == 0x70 &&
-				(card->cis.device == 0x2460 ||
-				 card->cis.device == 0x0460 ||
-				 card->cis.device == 0x23F1 ||
-				 card->cis.device == 0x23F0))
+			if (machine_is_msm8x60_charm_surf() ||
+			    machine_is_msm8x60_charm_ffa() ||
+			    machine_is_msm8x55_svlte_surf() ||
+			    machine_is_msm8x55_svlte_ffa())
 				break;
 			else
 				continue;
