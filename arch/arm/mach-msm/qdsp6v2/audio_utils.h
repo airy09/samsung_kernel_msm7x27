@@ -9,6 +9,11 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
 */
 #include <linux/msm_audio.h>
 
@@ -24,7 +29,6 @@
 #define BUF_ALLOC_IN    0x01
 #define BUF_ALLOC_OUT   0x02
 #define BUF_ALLOC_INOUT 0x03
-#define ALIGN_BUF_SIZE(size) ((size + 4095) & (~4095))
 
 struct timestamp{
 	unsigned long lowpart;
@@ -61,13 +65,13 @@ struct q6audio_in{
 	struct mutex			write_lock;
 	wait_queue_head_t		read_wait;
 	wait_queue_head_t		write_wait;
+	wait_queue_head_t		cmd_wait;
 
 	struct audio_client             *ac;
 	struct msm_audio_stream_config  str_cfg;
 	void				*enc_cfg;
 	struct msm_audio_buf_cfg        buf_cfg;
 	struct msm_audio_config		pcm_cfg;
-	void				*codec_cfg;
 
 	/* number of buffers available to read/write */
 	atomic_t			in_count;
@@ -75,6 +79,7 @@ struct q6audio_in{
 
 	/* first idx: num of frames per buf, second idx: offset to frame */
 	uint32_t			out_frame_info[FRAME_NUM][2];
+	int				eos_ack;
 	int				eos_rsp;
 	int				opened;
 	int				enabled;
