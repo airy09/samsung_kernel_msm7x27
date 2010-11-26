@@ -20,6 +20,13 @@
 #define AUDIO_FLAG_READ		0
 #define AUDIO_FLAG_WRITE	1
 
+enum {
+	DEVICE_UNMUTE = 0,
+	DEVICE_MUTE,
+	STREAM_UNMUTE,
+	STREAM_MUTE,
+};
+
 struct audio_buffer {
 	dma_addr_t phys;
 	void *data;
