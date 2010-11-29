@@ -33,7 +33,6 @@ struct auxpcm {
 	struct audio_client *ac;
 	uint32_t sample_rate;
 	uint32_t channel_count;
-	int opened;;
 };
 
 static long auxpcmout_ioctl(struct file *file, unsigned int cmd,
@@ -46,7 +45,6 @@ static long auxpcmout_ioctl(struct file *file, unsigned int cmd,
 	switch (cmd) {
 	case AUDIO_START: {
 		uint32_t acdb_id;
-		pr_debug("[%s:%s] AUDIO_START\n", __MM_FILE__, __func__);
 		if (arg == 0) {
 			acdb_id = 0;
 		} else if (copy_from_user(&acdb_id, (void *) arg,
@@ -58,23 +56,17 @@ static long auxpcmout_ioctl(struct file *file, unsigned int cmd,
 		}
 		if (auxpcmout->ac) {
 			rc = -EBUSY;
-			pr_err("[%s:%s] active session already existing\n",
-				__MM_FILE__, __func__);
 		} else {
 			auxpcmout->ac =
 				q6audio_open_auxpcm(auxpcmout->sample_rate,
 						auxpcmout->channel_count,
 						AUDIO_FLAG_WRITE, acdb_id);
-			if (!auxpcmout->ac) {
-				pr_err("[%s:%s] auxpcm open session failed\n",
-					__MM_FILE__, __func__);
+			if (!auxpcmout->ac)
 				rc = -ENOMEM;
-			}
 		}
 		break;
 	}
 	case AUDIO_STOP:
-		pr_debug("[%s:%s] AUDIO_STOP\n", __MM_FILE__, __func__);
 		break;
 	case AUDIO_FLUSH:
 		break;
@@ -82,27 +74,18 @@ static long auxpcmout_ioctl(struct file *file, unsigned int cmd,
 		struct msm_audio_config config;
 		if (auxpcmout->ac) {
 			rc = -EBUSY;
-			pr_err("[%s:%s] active session already existing\n",
-				__MM_FILE__, __func__);
 			break;
 		}
 		if (copy_from_user(&config, (void *) arg, sizeof(config))) {
 			rc = -EFAULT;
 			break;
 		}
-		pr_debug("[%s:%s] SET_CONFIG: samplerate = %d, channels = %d\n",
-			__MM_FILE__, __func__, config.sample_rate,
-			config.channel_count);
 		if (config.channel_count != 1) {
 			rc = -EINVAL;
-			pr_err("[%s:%s] invalid channelcount %d\n",
-			__MM_FILE__, __func__, config.channel_count);
 			break;
 		}
 		if (config.sample_rate != 8000) {
 			rc = -EINVAL;
-			pr_err("[%s:%s] invalid samplerate %d\n", __MM_FILE__,
-				__func__, config.sample_rate);
 			break;
 		}
 		auxpcmout->sample_rate = config.sample_rate;
@@ -120,51 +103,38 @@ static long auxpcmout_ioctl(struct file *file, unsigned int cmd,
 		config.unused[2] = 0;
 		if (copy_to_user((void *) arg, &config, sizeof(config)))
 			rc = -EFAULT;
-		pr_debug("[%s:%s] GET_CONFIG: samplerate = %d, channels= %d\n",
-			__MM_FILE__, __func__, config.sample_rate,
-			config.channel_count);
 		break;
 	}
 	default:
 		rc = -EINVAL;
 	}
 	mutex_unlock(&auxpcmout->lock);
-	pr_debug("[%s:%s] rc = %d\n", __MM_FILE__, __func__, rc);
 	return rc;
 }
 
-static struct auxpcm the_auxpcmout;
-
 static int auxpcmout_open(struct inode *inode, struct file *file)
 {
-	struct auxpcm *auxpcmout = &the_auxpcmout;
+	struct auxpcm *auxpcmout;
 
 	pr_info("[%s:%s] open\n", __MM_FILE__, __func__);
+	auxpcmout = kzalloc(sizeof(struct auxpcm), GFP_KERNEL);
 
-	mutex_lock(&auxpcmout->lock);
+	if (!auxpcmout)
+		return -ENOMEM;
 
-	if (auxpcmout->opened) {
-		pr_err("aux pcm loopback rx already open!\n");
-		mutex_unlock(&auxpcmout->lock);
-		return -EBUSY;
-	}
+	mutex_init(&auxpcmout->lock);
 	auxpcmout->channel_count = 1;
 	auxpcmout->sample_rate = 8000;
-	auxpcmout->opened = 1;
 	file->private_data = auxpcmout;
-	mutex_unlock(&auxpcmout->lock);
 	return 0;
 }
 
 static int auxpcmout_release(struct inode *inode, struct file *file)
 {
 	struct auxpcm *auxpcmout = file->private_data;
-	mutex_lock(&auxpcmout->lock);
 	if (auxpcmout->ac)
 		q6audio_auxpcm_close(auxpcmout->ac);
-	auxpcmout->ac = NULL;
-	auxpcmout->opened = 0;
-	mutex_unlock(&auxpcmout->lock);
+	kfree(auxpcmout);
 	pr_info("[%s:%s] release\n", __MM_FILE__, __func__);
 	return 0;
 }
@@ -184,7 +154,6 @@ struct miscdevice auxpcmout_misc = {
 
 static int __init auxpcmout_init(void)
 {
-	mutex_init(&the_auxpcmout.lock);
 	return misc_register(&auxpcmout_misc);
 }
 
