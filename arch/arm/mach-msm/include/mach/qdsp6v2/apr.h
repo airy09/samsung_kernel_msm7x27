@@ -1,13 +1,29 @@
-/* Copyright (c) 2010-2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *     * Redistributions of source code must retain the above copyright
+ *       notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above
+ *       copyright notice, this list of conditions and the following
+ *       disclaimer in the documentation and/or other materials provided
+ *       with the distribution.
+ *     * Neither the name of Code Aurora Forum, Inc. nor the names of its
+ *       contributors may be used to endorse or promote products derived
+ *       from this software without specific prior written permission.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+ * BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+ * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
+ * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 #ifndef __APR_H_
@@ -73,11 +89,7 @@ struct apr_hdr {
 #define APR_SVC_VPM		0x6
 #define APR_SVC_ASM		0x7
 #define APR_SVC_ADM		0x8
-#define APR_SVC_ADSP_MVM	0x09
-#define APR_SVC_ADSP_CVS	0x0A
-#define APR_SVC_ADSP_CVP	0x0B
-#define APR_SVC_USM		0x0C
-#define APR_SVC_MAX		0x0D
+#define APR_SVC_MAX		0x9
 
 /* Modem Service IDs */
 #define APR_SVC_MVS		0x3
@@ -91,14 +103,7 @@ struct apr_hdr {
 
 #define APR_NAME_MAX		0x40
 
-#define RESET_EVENTS		0xFFFFFFFF
-
-#define LPASS_RESTART_EVENT	0x1000
-#define LPASS_RESTART_READY	0x1001
-
 struct apr_client_data {
-	uint16_t reset_event;
-	uint16_t reset_proc;
 	uint16_t payload_size;
 	uint16_t hdr_len;
 	uint16_t msg_type;
@@ -120,7 +125,6 @@ struct apr_svc {
 	uint8_t rvd;
 	uint8_t port_cnt;
 	uint8_t svc_cnt;
-	uint8_t need_reset;
 	apr_fn port_fn[APR_MAX_PORTS];
 	void *port_priv[APR_MAX_PORTS];
 	apr_fn fn;
@@ -133,9 +137,27 @@ struct apr_client {
 	uint8_t id;
 	uint8_t svc_cnt;
 	uint8_t rvd;
-	struct mutex m_lock;
 	struct apr_svc_ch_dev *handle;
 	struct apr_svc svc[APR_SVC_MAX];
+};
+
+#define ADSP_GET_VERSION     0x00011152
+#define ADSP_GET_VERSION_RSP 0x00011153
+
+struct adsp_get_version {
+	uint32_t build_id;
+	uint32_t svc_cnt;
+};
+
+struct adsp_service_info {
+	uint32_t svc_id;
+	uint32_t svc_ver;
+};
+
+#define ADSP_CMD_SET_POWER_COLLAPSE_STATE 0x0001115C
+struct adsp_power_collapse {
+	struct apr_hdr hdr;
+	uint32_t power_collapse;
 };
 
 struct apr_svc *apr_register(char *dest, char *svc_name, apr_fn svc_fn,
@@ -148,5 +170,5 @@ int apr_send_pkt(void *handle, uint32_t *buf);
 int apr_deregister(void *handle);
 void change_q6_state(int state);
 void q6audio_dsp_not_responding(void);
-void apr_reset(void *handle);
+
 #endif
