@@ -9,6 +9,11 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
  */
 
 #include <linux/delay.h>
@@ -51,8 +56,8 @@
 #define MT9E013_TOTAL_STEPS_NEAR_TO_FAR    32
 
 uint16_t mt9e013_step_position_table[MT9E013_TOTAL_STEPS_NEAR_TO_FAR+1];
-uint16_t mt9e013_nl_region_boundary1;
-uint16_t mt9e013_nl_region_code_per_step1;
+uint16_t mt9e013_nl_region_boundary1 = 3;
+uint16_t mt9e013_nl_region_code_per_step1 = 30;
 uint16_t mt9e013_l_region_code_per_step = 4;
 uint16_t mt9e013_damping_threshold = 10;
 uint16_t mt9e013_sw_damping_time_wait = 1;
@@ -258,107 +263,59 @@ static uint16_t mt9e013_get_prev_lines_pf(void)
 {
 	if (mt9e013_ctrl->prev_res == QTR_SIZE)
 		return mt9e013_regs.reg_prev[E013_FRAME_LENGTH_LINES].wdata;
-	else if (mt9e013_ctrl->prev_res == FULL_SIZE)
-		return mt9e013_regs.reg_snap[E013_FRAME_LENGTH_LINES].wdata;
-	else if (mt9e013_ctrl->prev_res == HFR_60FPS)
-		return mt9e013_regs.reg_60fps[E013_FRAME_LENGTH_LINES].wdata;
-	else if (mt9e013_ctrl->prev_res == HFR_90FPS)
-		return mt9e013_regs.reg_120fps[E013_FRAME_LENGTH_LINES].wdata;
 	else
-		return mt9e013_regs.reg_120fps[E013_FRAME_LENGTH_LINES].wdata;
+		return mt9e013_regs.reg_snap[E013_FRAME_LENGTH_LINES].wdata;
 }
 
 static uint16_t mt9e013_get_prev_pixels_pl(void)
 {
 	if (mt9e013_ctrl->prev_res == QTR_SIZE)
 		return mt9e013_regs.reg_prev[E013_LINE_LENGTH_PCK].wdata;
-	else if (mt9e013_ctrl->prev_res == FULL_SIZE)
-		return mt9e013_regs.reg_snap[E013_LINE_LENGTH_PCK].wdata;
-	else if (mt9e013_ctrl->prev_res == HFR_60FPS)
-		return mt9e013_regs.reg_60fps[E013_LINE_LENGTH_PCK].wdata;
-	else if (mt9e013_ctrl->prev_res == HFR_90FPS)
-		return mt9e013_regs.reg_120fps[E013_LINE_LENGTH_PCK].wdata;
 	else
-		return mt9e013_regs.reg_120fps[E013_LINE_LENGTH_PCK].wdata;
+		return mt9e013_regs.reg_snap[E013_LINE_LENGTH_PCK].wdata;
 }
 
 static uint16_t mt9e013_get_pict_lines_pf(void)
 {
 	if (mt9e013_ctrl->pict_res == QTR_SIZE)
 		return mt9e013_regs.reg_prev[E013_FRAME_LENGTH_LINES].wdata;
-	else if (mt9e013_ctrl->pict_res == FULL_SIZE)
-		return mt9e013_regs.reg_snap[E013_FRAME_LENGTH_LINES].wdata;
-	else if (mt9e013_ctrl->pict_res == HFR_60FPS)
-		return mt9e013_regs.reg_60fps[E013_FRAME_LENGTH_LINES].wdata;
-	else if (mt9e013_ctrl->pict_res == HFR_90FPS)
-		return mt9e013_regs.reg_120fps[E013_FRAME_LENGTH_LINES].wdata;
 	else
-		return mt9e013_regs.reg_120fps[E013_FRAME_LENGTH_LINES].wdata;
+		return mt9e013_regs.reg_snap[E013_FRAME_LENGTH_LINES].wdata;
 }
 
 static uint16_t mt9e013_get_pict_pixels_pl(void)
 {
 	if (mt9e013_ctrl->pict_res == QTR_SIZE)
 		return mt9e013_regs.reg_prev[E013_LINE_LENGTH_PCK].wdata;
-	else if (mt9e013_ctrl->pict_res == FULL_SIZE)
-		return mt9e013_regs.reg_snap[E013_LINE_LENGTH_PCK].wdata;
-	else if (mt9e013_ctrl->pict_res == HFR_60FPS)
-		return mt9e013_regs.reg_60fps[E013_LINE_LENGTH_PCK].wdata;
-	else if (mt9e013_ctrl->pict_res == HFR_90FPS)
-		return mt9e013_regs.reg_120fps[E013_LINE_LENGTH_PCK].wdata;
 	else
-		return mt9e013_regs.reg_120fps[E013_LINE_LENGTH_PCK].wdata;
+		return mt9e013_regs.reg_snap[E013_LINE_LENGTH_PCK].wdata;
 }
 
 static uint32_t mt9e013_get_pict_max_exp_lc(void)
 {
 	if (mt9e013_ctrl->pict_res == QTR_SIZE)
 		return mt9e013_regs.reg_prev[E013_FRAME_LENGTH_LINES].wdata
-			* 24;
-	else if (mt9e013_ctrl->pict_res == FULL_SIZE)
-		return mt9e013_regs.reg_snap[E013_FRAME_LENGTH_LINES].wdata
-			* 24;
-	else if (mt9e013_ctrl->pict_res == HFR_60FPS)
-		return mt9e013_regs.reg_60fps[E013_FRAME_LENGTH_LINES].wdata
-			* 24;
-	else if (mt9e013_ctrl->pict_res == HFR_90FPS)
-		return mt9e013_regs.reg_120fps[E013_FRAME_LENGTH_LINES].wdata
-			* 24;
+				* 24;
 	else
-		return mt9e013_regs.reg_120fps[E013_FRAME_LENGTH_LINES].wdata
-			* 24;
+		return mt9e013_regs.reg_snap[E013_FRAME_LENGTH_LINES].wdata
+				* 24;
 }
 
 static int32_t mt9e013_set_fps(struct fps_cfg   *fps)
 {
 	uint16_t total_lines_per_frame;
 	int32_t rc = 0;
-	if (mt9e013_ctrl->curr_res == QTR_SIZE)
-		total_lines_per_frame =
-		mt9e013_regs.reg_prev[E013_FRAME_LENGTH_LINES].wdata;
-	else if (mt9e013_ctrl->curr_res == FULL_SIZE)
-		total_lines_per_frame =
-		mt9e013_regs.reg_snap[E013_FRAME_LENGTH_LINES].wdata;
-	else if (mt9e013_ctrl->curr_res == HFR_60FPS)
-		total_lines_per_frame =
-		mt9e013_regs.reg_60fps[E013_FRAME_LENGTH_LINES].wdata;
-	else if (mt9e013_ctrl->curr_res == HFR_90FPS)
-		total_lines_per_frame =
-		mt9e013_regs.reg_120fps[E013_FRAME_LENGTH_LINES].wdata;
-	else
-		total_lines_per_frame =
-		mt9e013_regs.reg_120fps[E013_FRAME_LENGTH_LINES].wdata;
-
-	mt9e013_ctrl->fps_divider = fps->fps_div;
-	mt9e013_ctrl->pict_fps_divider = fps->pict_fps_div;
-
-	if (mt9e013_ctrl->curr_res == FULL_SIZE) {
+	if (mt9e013_ctrl->sensormode == SENSOR_PREVIEW_MODE) {
 		total_lines_per_frame = (uint16_t)
-		(total_lines_per_frame * mt9e013_ctrl->pict_fps_divider/0x400);
+		((mt9e013_regs.reg_prev[E013_FRAME_LENGTH_LINES].wdata)
+		* mt9e013_ctrl->fps_divider/0x400);
 	} else {
 		total_lines_per_frame = (uint16_t)
-		(total_lines_per_frame * mt9e013_ctrl->fps_divider/0x400);
+		((mt9e013_regs.reg_snap[E013_FRAME_LENGTH_LINES].wdata)
+		 * mt9e013_ctrl->fps_divider/0x400);
 	}
+	mt9e013_ctrl->fps_divider = fps->fps_div;
+	mt9e013_ctrl->pict_fps_divider = fps->pict_fps_div;
 
 	mt9e013_group_hold_on();
 	rc = mt9e013_i2c_write_w_sensor(REG_FRAME_LENGTH_LINES,
@@ -376,7 +333,7 @@ static int32_t mt9e013_write_exp_gain(uint16_t gain, uint32_t line)
 		gain = max_legal_gain;
 	}
 
-	if (mt9e013_ctrl->curr_res != FULL_SIZE) {
+	if (mt9e013_ctrl->sensormode == SENSOR_PREVIEW_MODE) {
 		mt9e013_ctrl->my_reg_gain = gain;
 		mt9e013_ctrl->my_reg_line_count = (uint16_t) line;
 		line = (uint32_t) (line * mt9e013_ctrl->fps_divider /
@@ -524,51 +481,32 @@ static int32_t mt9e013_sensor_setting(int update_type, int rt)
 	stored_af_step = mt9e013_ctrl->curr_step_pos;
 	mt9e013_set_default_focus(0);
 	mt9e013_stop_stream();
-	msleep(15);
+	msleep(150);
 	if (update_type == REG_INIT) {
 		mt9e013_i2c_write_w_table(mt9e013_regs.reg_mipi,
 			mt9e013_regs.reg_mipi_size);
 		mt9e013_i2c_write_w_table(mt9e013_regs.rec_settings,
 			mt9e013_regs.rec_size);
+		mt9e013_i2c_write_w_table(mt9e013_regs.reg_pll,
+			mt9e013_regs.reg_pll_size);
 		cam_debug_init();
 		CSI_CONFIG = 0;
 	} else if (update_type == UPDATE_PERIODIC) {
-		if (rt == QTR_SIZE) {
-			mt9e013_i2c_write_w_table(mt9e013_regs.reg_pll,
-				mt9e013_regs.reg_pll_size);
+		if (rt == RES_PREVIEW) {
 			mt9e013_i2c_write_w_table(mt9e013_regs.reg_prev,
 				mt9e013_regs.reg_prev_size);
-		} else if (rt == FULL_SIZE) {
-			mt9e013_i2c_write_w_table(mt9e013_regs.reg_pll,
-				mt9e013_regs.reg_pll_size);
+		} else {
 			mt9e013_i2c_write_w_table(mt9e013_regs.reg_snap,
 				mt9e013_regs.reg_snap_size);
-		} else if (rt == HFR_60FPS) {
-			mt9e013_i2c_write_w_table(mt9e013_regs.reg_pll_120fps,
-				mt9e013_regs.reg_pll_120fps_size);
-			mt9e013_i2c_write_w_sensor(0x0306, 0x0029);
-			mt9e013_i2c_write_w_table(mt9e013_regs.reg_120fps,
-				mt9e013_regs.reg_120fps_size);
-		} else if (rt == HFR_90FPS) {
-			mt9e013_i2c_write_w_table(mt9e013_regs.reg_pll_120fps,
-				mt9e013_regs.reg_pll_120fps_size);
-			mt9e013_i2c_write_w_sensor(0x0306, 0x003D);
-			mt9e013_i2c_write_w_table(mt9e013_regs.reg_120fps,
-				mt9e013_regs.reg_120fps_size);
-		} else if (rt == HFR_120FPS) {
-			msm_camio_vfe_clk_rate_set(266667000);
-			mt9e013_i2c_write_w_table(mt9e013_regs.reg_pll_120fps,
-				mt9e013_regs.reg_pll_120fps_size);
-			mt9e013_i2c_write_w_table(mt9e013_regs.reg_120fps,
-				mt9e013_regs.reg_120fps_size);
 		}
+		msleep(10);
 		if (!CSI_CONFIG) {
-			msm_camio_vfe_clk_rate_set(192000000);
+			msm_camio_vfe_clk_rate_set(153600000);
 			mt9e013_csi_params.data_format = CSI_10BIT;
 			mt9e013_csi_params.lane_cnt = 2;
 			mt9e013_csi_params.lane_assign = 0xe4;
 			mt9e013_csi_params.dpcm_scheme = 0;
-			mt9e013_csi_params.settle_cnt = 0x18;
+			mt9e013_csi_params.settle_cnt = 7;
 			rc = msm_camio_csi_config(&mt9e013_csi_params);
 			msleep(10);
 			CSI_CONFIG = 1;
@@ -583,11 +521,14 @@ static int32_t mt9e013_video_config(int mode)
 {
 
 	int32_t rc = 0;
-
+	int rt;
 	CDBG("video config\n");
 	/* change sensor resolution if needed */
-	if (mt9e013_sensor_setting(UPDATE_PERIODIC,
-			mt9e013_ctrl->prev_res) < 0)
+	if (mt9e013_ctrl->prev_res == QTR_SIZE)
+		rt = RES_PREVIEW;
+	else
+		rt = RES_CAPTURE;
+	if (mt9e013_sensor_setting(UPDATE_PERIODIC, rt) < 0)
 		return rc;
 	if (mt9e013_ctrl->set_test) {
 		if (mt9e013_test(mt9e013_ctrl->set_test) < 0)
@@ -602,11 +543,15 @@ static int32_t mt9e013_video_config(int mode)
 static int32_t mt9e013_snapshot_config(int mode)
 {
 	int32_t rc = 0;
+	int rt;
 	/*change sensor resolution if needed */
 	if (mt9e013_ctrl->curr_res != mt9e013_ctrl->pict_res) {
-		if (mt9e013_sensor_setting(UPDATE_PERIODIC,
-				mt9e013_ctrl->pict_res) < 0)
-			return rc;
+		if (mt9e013_ctrl->pict_res == QTR_SIZE)
+			rt = RES_PREVIEW;
+		else
+			rt = RES_CAPTURE;
+	if (mt9e013_sensor_setting(UPDATE_PERIODIC, rt) < 0)
+		return rc;
 	}
 
 	mt9e013_ctrl->curr_res = mt9e013_ctrl->pict_res;
@@ -617,10 +562,14 @@ static int32_t mt9e013_snapshot_config(int mode)
 static int32_t mt9e013_raw_snapshot_config(int mode)
 {
 	int32_t rc = 0;
+	int rt;
 	/* change sensor resolution if needed */
 	if (mt9e013_ctrl->curr_res != mt9e013_ctrl->pict_res) {
-		if (mt9e013_sensor_setting(UPDATE_PERIODIC,
-				mt9e013_ctrl->pict_res) < 0)
+		if (mt9e013_ctrl->pict_res == QTR_SIZE)
+			rt = RES_PREVIEW;
+		else
+			rt = RES_CAPTURE;
+		if (mt9e013_sensor_setting(UPDATE_PERIODIC, rt) < 0)
 			return rc;
 	}
 
@@ -635,18 +584,12 @@ static int32_t mt9e013_set_sensor_mode(int mode,
 	int32_t rc = 0;
 	switch (mode) {
 	case SENSOR_PREVIEW_MODE:
-	case SENSOR_HFR_60FPS_MODE:
-	case SENSOR_HFR_90FPS_MODE:
-	case SENSOR_HFR_120FPS_MODE:
-		mt9e013_ctrl->prev_res = res;
 		rc = mt9e013_video_config(mode);
 		break;
 	case SENSOR_SNAPSHOT_MODE:
-		mt9e013_ctrl->pict_res = res;
 		rc = mt9e013_snapshot_config(mode);
 		break;
 	case SENSOR_RAW_SNAPSHOT_MODE:
-		mt9e013_ctrl->pict_res = res;
 		rc = mt9e013_raw_snapshot_config(mode);
 		break;
 	default:
@@ -678,13 +621,14 @@ static int mt9e013_probe_init_sensor(const struct msm_camera_sensor_info *data)
 	if (!rc) {
 		CDBG("sensor_reset = %d\n", rc);
 		gpio_direction_output(data->sensor_reset, 0);
-		msleep(10);
+		msleep(50);
 		gpio_set_value_cansleep(data->sensor_reset, 1);
-		msleep(10);
+		msleep(13);
 	} else {
 		goto init_probe_done;
 	}
 
+	msleep(20);
 	CDBG(" mt9e013_probe_init_sensor is called\n");
 	rc = mt9e013_i2c_read(0x0000, &chipid, 2);
 	CDBG("ID: %d\n", chipid);
@@ -753,7 +697,10 @@ int mt9e013_sensor_open_init(const struct msm_camera_sensor_info *data)
 		goto init_fail;
 
 	CDBG("init settings\n");
-	rc = mt9e013_sensor_setting(REG_INIT, mt9e013_ctrl->prev_res);
+	if (mt9e013_ctrl->prev_res == QTR_SIZE)
+		rc = mt9e013_sensor_setting(REG_INIT, RES_PREVIEW);
+	else
+		rc = mt9e013_sensor_setting(REG_INIT, RES_CAPTURE);
 	mt9e013_ctrl->fps = 30*Q8;
 	mt9e013_init_focus();
 	if (rc < 0) {
@@ -803,6 +750,7 @@ static int mt9e013_i2c_probe(struct i2c_client *client,
 	mt9e013_init_client(client);
 	mt9e013_client = client;
 
+	msleep(50);
 
 	CDBG("mt9e013_probe successed! rc = %d\n", rc);
 	return 0;
@@ -1012,7 +960,6 @@ static int mt9e013_sensor_probe(const struct msm_camera_sensor_info *info,
 	s->s_init = mt9e013_sensor_open_init;
 	s->s_release = mt9e013_sensor_release;
 	s->s_config  = mt9e013_sensor_config;
-	s->s_mount_angle = info->sensor_platform_info->mount_angle;
 	gpio_set_value_cansleep(info->sensor_reset, 0);
 	mt9e013_probe_init_done(info);
 	return rc;
