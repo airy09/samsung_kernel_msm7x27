@@ -1,13 +1,29 @@
 /* Copyright (c) 2011, Code Aurora Forum. All rights reserved.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *     * Redistributions of source code must retain the above copyright
+ *       notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above
+ *       copyright notice, this list of conditions and the following
+ *       disclaimer in the documentation and/or other materials provided
+ *       with the distribution.
+ *     * Neither the name of Code Aurora Forum, Inc. nor the names of its
+ *       contributors may be used to endorse or promote products derived
+ *       from this software without specific prior written permission.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+ * BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+ * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
+ * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
@@ -16,7 +32,6 @@
 
 #include <linux/types.h>
 #include <linux/clk.h>
-#include <linux/regulator/consumer.h>
 
 #define DSPS_SIGNATURE	0x12345678
 
@@ -51,44 +66,19 @@ struct dsps_gpio_info {
 };
 
 /**
- * DSPS Power regulators Platform data.
- *
- * @name - regulator name.
- * @volt - required voltage (in uV).
- * @reg - reserved for the driver.
- */
-struct dsps_regulator_info {
-	const char *name;
-	int volt;
-	struct regulator *reg;
-};
-
-/**
  * DSPS Platform data.
  *
- * @pil_name - peripheral image name
  * @clks - array of clocks.
  * @clks_num - number of clocks in array.
  * @gpios - array of gpios.
  * @gpios_num - number of gpios.
- * @regs - array of regulators.
- * @regs_num - number of regulators.
- * @dsps_pwr_ctl_en - to enable DSPS to do power control if set 1
- *  otherwise the apps will do power control
- * @ppss_pause_reg - Offset to the PPSS_PAUSE register
  * @signature - signature for validity check.
  */
 struct msm_dsps_platform_data {
-	const char *pil_name;
 	struct dsps_clk_info *clks;
 	int clks_num;
 	struct dsps_gpio_info *gpios;
 	int gpios_num;
-	struct dsps_regulator_info *regs;
-	int regs_num;
-	int dsps_pwr_ctl_en;
-	void (*init)(struct msm_dsps_platform_data *data);
-	int ppss_pause_reg;
 	u32 signature;
 };
 
