@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2009 Google, Inc.
- * Copyright (c) 2010, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2010-2011, Code Aurora Forum. All rights reserved.
  * Author: Brian Swetland <swetland@google.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -28,6 +28,7 @@
 #include <mach/qdsp6v2/apr_audio.h>
 #include <mach/qdsp6v2/q6asm.h>
 #include <mach/qdsp6v2/audio_dev_ctl.h>
+#include <linux/wakelock.h>
 
 #define MAX_BUF 2
 #define BUFSZ (4800)
@@ -48,6 +49,8 @@ struct pcm {
 	atomic_t out_opened;
 	atomic_t out_stopped;
 	atomic_t out_prefill;
+	struct wake_lock wakelock;
+	struct wake_lock idlelock;
 };
 
 void pcm_out_cb(uint32_t opcode, uint32_t token,
@@ -66,6 +69,20 @@ void pcm_out_cb(uint32_t opcode, uint32_t token,
 		break;
 	}
 	spin_unlock_irqrestore(&pcm->dsp_lock, flags);
+}
+
+static void audio_prevent_sleep(struct pcm *audio)
+{
+	pr_debug("%s:\n", __func__);
+	wake_lock(&audio->wakelock);
+	wake_lock(&audio->idlelock);
+}
+
+static void audio_allow_sleep(struct pcm *audio)
+{
+	pr_debug("%s:\n", __func__);
+	wake_unlock(&audio->wakelock);
+	wake_unlock(&audio->idlelock);
 }
 
 static int pcm_out_enable(struct pcm *pcm)
@@ -154,6 +171,7 @@ static long pcm_out_ioctl(struct file *file, unsigned int cmd,
 			rc = -EFAULT;
 			break;
 		}
+		audio_prevent_sleep(pcm);
 		atomic_set(&pcm->out_enabled, 1);
 		break;
 	}
@@ -169,7 +187,7 @@ static long pcm_out_ioctl(struct file *file, unsigned int cmd,
 		break;
 	case AUDIO_SET_CONFIG: {
 		struct msm_audio_config config;
-		pr_info("AUDIO_SET_CONFIG\n");
+		pr_debug("%s: AUDIO_SET_CONFIG\n", __func__);
 		if (copy_from_user(&config, (void *) arg, sizeof(config))) {
 			rc = -EFAULT;
 			break;
@@ -190,11 +208,15 @@ static long pcm_out_ioctl(struct file *file, unsigned int cmd,
 		pcm->channel_count = config.channel_count;
 		pcm->buffer_size = config.buffer_size;
 		pcm->buffer_count = config.buffer_count;
+		pr_debug("%s:buffer_size:%d buffer_count:%d sample_rate:%d \
+			channel_count:%d\n",  __func__, pcm->buffer_size,
+			pcm->buffer_count, pcm->sample_rate,
+			pcm->channel_count);
 		break;
 	}
 	case AUDIO_GET_CONFIG: {
 		struct msm_audio_config config;
-		pr_info("AUDIO_GET_CONFIG\n");
+		pr_debug("%s: AUDIO_GET_CONFIG\n", __func__);
 		config.buffer_size = pcm->buffer_size;
 		config.buffer_count = pcm->buffer_count;
 		config.sample_rate = pcm->sample_rate;
@@ -229,10 +251,12 @@ static int pcm_out_open(struct inode *inode, struct file *file)
 {
 	struct pcm *pcm;
 	int rc = 0;
+	char name[24];
+
 	pr_info("[%s:%s] open\n", __MM_FILE__, __func__);
 	pcm = kzalloc(sizeof(struct pcm), GFP_KERNEL);
 	if (!pcm) {
-		pr_info("%s: Failed to allocated memory\n", __func__);
+		pr_err("%s: Failed to allocated memory\n", __func__);
 		return -ENOMEM;
 	}
 
@@ -250,7 +274,8 @@ static int pcm_out_open(struct inode *inode, struct file *file)
 
 	rc = q6asm_open_write(pcm->ac, FORMAT_LINEAR_PCM);
 	if (rc < 0) {
-		pr_info("%s: pcm out open failed\n", __func__);
+		pr_err("%s: pcm out open failed for session %d\n", __func__,
+			pcm->ac->session);
 		rc = -EINVAL;
 		goto fail;
 	}
@@ -264,7 +289,14 @@ static int pcm_out_open(struct inode *inode, struct file *file)
 	atomic_set(&pcm->out_count, pcm->buffer_count);
 	atomic_set(&pcm->out_prefill, 0);
 	atomic_set(&pcm->out_opened, 1);
+	snprintf(name, sizeof name, "audio_pcm_%x", pcm->ac->session);
+	wake_lock_init(&pcm->wakelock, WAKE_LOCK_SUSPEND, name);
+	snprintf(name, sizeof name, "audio_pcm_idle_%x", pcm->ac->session);
+	wake_lock_init(&pcm->idlelock, WAKE_LOCK_IDLE, name);
+
 	file->private_data = pcm;
+	pr_info("[%s:%s] open session id[%d]\n", __MM_FILE__,
+				__func__, pcm->ac->session);
 	return 0;
 fail:
 	if (pcm->ac)
@@ -300,7 +332,8 @@ static ssize_t pcm_out_write(struct file *file, const char __user *buf,
 				(atomic_read(&pcm->out_count) ||
 				atomic_read(&pcm->out_stopped)), 5 * HZ);
 		if (!rc) {
-			pr_info("%s: wait_event_timeout failed\n", __func__);
+			pr_err("%s: wait_event_timeout failed for session %d\n",
+				__func__, pcm->ac->session);
 			goto fail;
 		}
 
@@ -343,12 +376,19 @@ fail:
 static int pcm_out_release(struct inode *inode, struct file *file)
 {
 	struct pcm *pcm = file->private_data;
+
+	pr_info("[%s:%s] release session id[%d]\n", __MM_FILE__,
+				__func__, pcm->ac->session);
 	if (pcm->ac)
 		pcm_out_disable(pcm);
 	msm_clear_session_id(pcm->ac->session);
 	q6asm_audio_client_free(pcm->ac);
+	audio_allow_sleep(pcm);
+	wake_lock_destroy(&pcm->wakelock);
+	wake_lock_destroy(&pcm->idlelock);
+	mutex_destroy(&pcm->lock);
+	mutex_destroy(&pcm->write_lock);
 	kfree(pcm);
-	pr_info("[%s:%s] release\n", __MM_FILE__, __func__);
 	return 0;
 }
 
