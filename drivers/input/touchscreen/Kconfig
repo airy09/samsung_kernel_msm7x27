@@ -99,17 +99,6 @@ config TOUCHSCREEN_BITSY
 	  To compile this driver as a module, choose M here: the
 	  module will be called h3600_ts_input.
 
-config TOUCHSCREEN_CYPRESS_TMG
-	tristate "Support for Cypress TMC i2c touchscreen"
-	depends on I2C
-	help
-	  Say Y here to enable support for cy8ctmg touchcreens.
-
-	  If unsure, say N
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called h3600_ts_input.
-
 config TOUCHSCREEN_DA9034
 	tristate "Touchscreen support for Dialog Semiconductor DA9034"
 	depends on PMIC_DA903X
@@ -187,10 +176,6 @@ config TOUCHSCREEN_GUNZE
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called gunze.
-
-config TOUCHSCREEN_ELAN_I2C_8232
-	tristate "Elan 8232 I2C touchscreen"
-	depends on I2C
 
 config TOUCHSCREEN_ELO
 	tristate "Elo serial touchscreens"
@@ -309,7 +294,7 @@ config TOUCHSCREEN_PENMOUNT
 
 config TOUCHSCREEN_MSM
 	bool "Qualcomm MSM touchscreen controller"
-	depends on ARCH_MSM
+	depends on ARCH_MSM7X30 && MARIMBA_TSADC
 	default n
 	help
 	  Say Y here if you have a 4-wire resistive touchscreen panel
@@ -614,6 +599,27 @@ config TOUCHSCREEN_TSC2007
 	  To compile this driver as a module, choose M here: the
 	  module will be called tsc2007.
 
+config TOUCHSCREEN_MSM_LEGACY
+	default n
+	tristate "MSM Touchscreen"
+	depends on ARCH_MSM && !ARCH_MSM7X30
+	help
+	  Say Y here if you have a touchscreen interface using MSM
+	  touchscreen controller.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called msm_touch.
+
+config ANDROID_TOUCHSCREEN_MSM_HACKS
+	default y
+	depends on TOUCHSCREEN_MSM_LEGACY
+	bool "Android MSM Touchscreen hacks"
+	help
+	  Say Y here if you are running Android framework on Qualcomm
+	  MSM/QSD based Surf or FFAs. These hacks are required inorder
+	  to Android framework to receive adjusted x, y co-ordinates
+	  until proper calibration framework is in place.
+
 config TOUCHSCREEN_W90X900
 	tristate "W90P910 touchscreen driver"
 	depends on HAVE_CLK
@@ -645,4 +651,73 @@ config TOUCHSCREEN_TPS6507X
 	  To compile this driver as a module, choose M here: the
 	  module will be called tps6507x_ts.
 
+config TOUCHSCREEN_CY8C_TS
+	tristate "Cypress TMA300-TMG200 based touchscreens"
+	depends on I2C
+	default n
+	help
+	  Say Y here if you have a Cypress TMA300/TMG200 based touchscreen.
+	  TMA300 is a multi-touch screen which can report upto 10
+	  touches at a time. TMG200 supports 2 touches.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called cy8c_ts.
+
+config TOUCHSCREEN_CYTTSP_I2C
+       tristate "Cypress TTSP based touchscreens"
+       depends on I2C
+       default n
+       help
+         Say Y here if you have a Cypress TTSP based touchscreen.
+         TMA300 is a multi-touch screen which can report upto 10
+         touches at a time.
+
+         If unsure, say N.
+
+         To compile this driver as a module, choose M here: the
+         module will be called cyttsp-i2c.
+
+config TOUCHSCREEN_SYNAPTICS_I2C_RMI4
+	tristate "Synaptics i2c touchscreen"
+	depends on I2C
+	help
+	  This enables support for Synaptics RMI4 over I2C based touchscreens.
+
+config TOUCHSCREEN_MXT140_I2C_TSP
+	tristate "Atmel mXT140 i2c touchscreen"
+	depends on I2C
+	help
+	  This enables support for Atmel mXT140 TSP over I2C based touchscreens.
+
+config TOUCHSCREEN_MELFAS
+        tristate "melfas touchscreen driver"
+        depends on I2C
+        help
+          Say Y here to enable the driver for the touchscreen on the
+          bennett board.
+ 
+          If unsure, say N.
+ 
+          To compile this driver as a module, choose M here: the
+          module will be called melfas_ts.
+ 
+config TOUCHSCREEN_MELFAS_KEY
+    bool "melfas touchkey"
+        depends on TOUCHSCREEN_MELFAS
+        default n
+        help
+          Say Y here to enable the touchkey on melfas touchkey.
+ 
+          Say N here to disable the touchkey on melfas touchkey.
+ 
+config TOUCHSCREEN_MELFAS_FIRMWARE_UPDATE
+    bool "melfas touchscreen firmware update"
+        depends on TOUCHSCREEN_MELFAS
+        default y
+        help
+          Say Y here to enable the touchscreen firmware update.
+ 
+          Say N here to disable the touchscreen firmware update.
 endif

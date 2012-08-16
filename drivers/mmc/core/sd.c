@@ -42,6 +42,7 @@ static const unsigned int tacc_mant[] = {
 	35,	40,	45,	50,	55,	60,	70,	80,
 };
 
+#define CONFIG_MMC_PARANOID_SD_INIT //qualcomm
 #define UNSTUFF_BITS(resp,start,size)					\
 	({								\
 		const int __size = size;				\
@@ -626,12 +627,46 @@ static int mmc_sd_suspend(struct mmc_host *host)
 static int mmc_sd_resume(struct mmc_host *host)
 {
 	int err;
+#ifdef CONFIG_MMC_PARANOID_SD_INIT
+	int retries;
+#endif
 
 	BUG_ON(!host);
 	BUG_ON(!host->card);
 
 	mmc_claim_host(host);
+#ifdef CONFIG_MMC_PARANOID_SD_INIT
+	retries = 5;
+	while (retries) {
+		err = mmc_sd_init_card(host, host->ocr, host->card);
+
+#if 1	//defined(CONFIG_MACH_LUCAS)
+		if (err) {
+			printk(KERN_ERR "%s: Re-init card rc = %d (retries = %d)\n",
+		       mmc_hostname(host), err, retries);
+
+			retries--;
+			// qualcomm add
+			mmc_power_off(host);
+			mdelay(5);
+			mmc_power_up(host);
+			continue;
+		}
+#else		
+
+		if (err) {
+			printk(KERN_ERR "%s: Re-init card rc = %d (retries = %d)\n",
+			       mmc_hostname(host), err, retries);
+			mdelay(5);
+			retries--;
+			continue;
+		}
+#endif		
+		break;
+	}
+#else
 	err = mmc_sd_init_card(host, host->ocr, host->card);
+#endif
 	mmc_release_host(host);
 
 	return err;
@@ -735,6 +770,10 @@ int mmc_attach_sd(struct mmc_host *host, u32 ocr)
 		err = mmc_sd_init_card(host, host->ocr, NULL);
 		if (err) {
 			retries--;
+			// qualcomm add
+			mmc_power_off(host);
+			mdelay(5);
+			mmc_power_up(host);
 			continue;
 		}
 		break;
