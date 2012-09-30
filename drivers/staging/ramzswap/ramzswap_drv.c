@@ -25,6 +25,7 @@
 #include <linux/highmem.h>
 #include <linux/lzo.h>
 #include <linux/string.h>
+#include <linux/slab.h>
 #include <linux/swap.h>
 #include <linux/swapops.h>
 #include <linux/vmalloc.h>
