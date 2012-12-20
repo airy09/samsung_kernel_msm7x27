@@ -1,6 +1,3 @@
-#if defined(CONFIG_MACH_TASS)
-#include "acpuclock_all.c"
-#else
 /* arch/arm/mach-msm/acpuclock.c
  *
  * MSM architecture clock driver
@@ -219,8 +216,10 @@ static struct clkctl_acpu_speed pll0_960_pll1_245_pll2_1200[] = {
 	{ 1, 729600, ACPU_PLL_0, 4, 0, 182400, 3, 7, 122880 },
 	{ 1, 748800, ACPU_PLL_0, 4, 0, 187200, 3, 7, 122880 },
 	{ 1, 768000, ACPU_PLL_0, 4, 0, 192000, 3, 7, 122880 },
+#ifndef CONFIG_MACH_EUROPA
 	{ 1, 787200, ACPU_PLL_0, 4, 0, 196800, 3, 7, 122880 },
-	{ 1, 800000, ACPU_PLL_0, 4, 0, 201600, 3, 7, 122880 },
+	{ 1, 806400, ACPU_PLL_0, 4, 0, 201600, 3, 7, 122880 },
+#endif
 	//{ 1, 825600, ACPU_PLL_0, 4, 0, 206400, 3, 7, 122880 },
 	//{ 1, 844800, ACPU_PLL_0, 4, 0, 211200, 3, 7, 122880 },
 	//{ 1, 864000, ACPU_PLL_0, 4, 0, 216000, 3, 7, 122880 },
@@ -256,23 +255,9 @@ static struct clkctl_acpu_speed pll0_960_pll1_245_pll2_800[] = {
 	{ 0, 200000, ACPU_PLL_2, 2, 3,  66667, 2, 4,  61440 },
 	{ 1, 245760, ACPU_PLL_1, 1, 0, 122880, 1, 4,  61440 },
 	{ 1, 320000, ACPU_PLL_0, 4, 2, 160000, 1, 5, 122880 },
-	{ 0, 396800, ACPU_PLL_2, 2, 1, 132267, 2, 5, 122880 },
+	{ 0, 400000, ACPU_PLL_2, 2, 1, 133333, 2, 5, 122880 },
 	{ 1, 480000, ACPU_PLL_0, 4, 1, 160000, 2, 6, 122880 },
-	{ 1, 672000, ACPU_PLL_2, 2, 0, 336000, 3, 7, 336000 },
-	{ 1, 748800, ACPU_PLL_2, 2, 0, 374400, 3, 7, 374400 },
-	{ 1, 768000, ACPU_PLL_2, 2, 0, 384000, 3, 7, 384000 },
-	{ 1, 787200, ACPU_PLL_2, 2, 0, 393600, 3, 7, 393600 },
-	{ 1, 800000, ACPU_PLL_2, 2, 0, 403200, 3, 7, 403200 },
-	{ 1, 825600, ACPU_PLL_2, 2, 0, 412800, 3, 7, 412800 },
-	{ 1, 844800, ACPU_PLL_2, 2, 0, 422400, 3, 7, 422400 },
-	{ 1, 864000, ACPU_PLL_2, 2, 0, 432000, 3, 7, 432000 },
-	{ 1, 883200, ACPU_PLL_2, 2, 0, 441600, 3, 7, 441600 },
-	{ 1, 902400, ACPU_PLL_2, 2, 0, 451200, 3, 7, 451200 },
-	{ 1, 921600, ACPU_PLL_2, 2, 0, 460800, 3, 7, 460800 },
-	{ 1, 940800, ACPU_PLL_2, 2, 0, 470400, 3, 7, 470400 },
-	{ 1, 960000, ACPU_PLL_2, 2, 0, 480000, 3, 7, 480000 },
-	{ 1, 979200, ACPU_PLL_2, 2, 0, 489600, 3, 7, 489600 },
-	{ 1, 998400, ACPU_PLL_2, 2, 0, 499200, 3, 7, 499200 },
+	{ 1, 800000, ACPU_PLL_2, 2, 0, 200000, 3, 7, 122880 },
 	{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, {0, 0, 0}, {0, 0, 0} }
 };
 
@@ -297,7 +282,7 @@ static struct clkctl_acpu_speed pll0_960_pll1_196_pll2_800[] = {
 #define PLL_800_MHZ	41
 #define PLL_960_MHZ	50
 #define PLL_1056_MHZ	55
-#define PLL_1200_MHZ	63
+#define PLL_1200_MHZ	62
 
 #define PLL_CONFIG(m0, m1, m2) { \
 	PLL_##m0##_MHZ, PLL_##m1##_MHZ, PLL_##m2##_MHZ, \
@@ -456,7 +441,7 @@ static int acpuclk_set_vdd_level(int vdd)
 /* Set proper dividers for the given clock speed. */
 static void acpuclk_set_div(const struct clkctl_acpu_speed *hunt_s)
 {
-	uint32_t reg_clkctl, reg_clksel, clk_div, src_sel;
+	uint32_t reg_clkctl, reg_clksel, clk_div, src_sel, a11_div;
 
 	reg_clksel = readl(A11S_CLK_SEL_ADDR);
 
@@ -464,6 +449,15 @@ static void acpuclk_set_div(const struct clkctl_acpu_speed *hunt_s)
 	clk_div = (reg_clksel >> 1) & 0x03;
 	/* CLK_SEL_SRC1NO */
 	src_sel = reg_clksel & 1;
+
+	a11_div = hunt_s->a11clk_src_div;
+
+	if(hunt_s->a11clk_khz>600000) {
+					a11_div=0;
+					writel(hunt_s->a11clk_khz/19200, PLLn_L_VAL(0));
+					udelay(50);
+			}
+
 
 	/*
 	 * If the new clock divider is higher than the previous, then
@@ -475,30 +469,18 @@ static void acpuclk_set_div(const struct clkctl_acpu_speed *hunt_s)
 		writel(reg_clksel, A11S_CLK_SEL_ADDR);
 	}
 
-	// Perform overclocking if requested
-	if(hunt_s->a11clk_khz>800000) {
-		// Change the speed of PLL2
-		writel(hunt_s->a11clk_khz/19200, PLLn_L_VAL(2));
-		udelay(50);
-	}
-
 	/* Program clock source and divider */
 	reg_clkctl = readl(A11S_CLK_CNTL_ADDR);
 	reg_clkctl &= ~(0xFF << (8 * src_sel));
+	reg_clkctl |=a11_div;
 	reg_clkctl |= hunt_s->a11clk_src_sel << (4 + 8 * src_sel);
+	reg_clkctl |=a11_div;
 	reg_clkctl |= hunt_s->a11clk_src_div << (0 + 8 * src_sel);
 	writel(reg_clkctl, A11S_CLK_CNTL_ADDR);
 
 	/* Program clock source selection */
 	reg_clksel ^= 1;
 	writel(reg_clksel, A11S_CLK_SEL_ADDR);
-
-	// Recover from overclocking
-	if(hunt_s->a11clk_khz<=800000) {
-		// Restore the speed of PLL2
-		writel(PLL_800_MHZ, PLLn_L_VAL(2));
-		udelay(50);
-	}
 
 	/*
 	 * If the new clock divider is lower than the previous, then
@@ -728,9 +710,6 @@ static void __init acpuclk_init(void)
 	}
 
 	drv_state.current_speed = speed;
-	if (speed->pll != ACPU_PLL_TCXO)
-		if (pc_pll_request(speed->pll, 1))
-			pr_warning("Failed to vote for boot PLL\n");
 
 	res = ebi1_clk_set_min_rate(CLKVOTE_ACPUCLK, speed->axiclk_khz * 1000);
 	if (res < 0)
@@ -973,8 +952,6 @@ void __init msm_acpu_clock_init(struct msm_acpu_clock_platform_data *clkdata)
 	pr_info("acpu_clock_init()\n");
 
 	mutex_init(&drv_state.lock);
-	if (cpu_is_msm7x27())
-		shared_pll_control_init();
 	drv_state.acpu_switch_time_us = clkdata->acpu_switch_time_us;
 	drv_state.max_speed_delta_khz = clkdata->max_speed_delta_khz;
 	drv_state.vdd_switch_time_us = clkdata->vdd_switch_time_us;
@@ -986,9 +963,10 @@ void __init msm_acpu_clock_init(struct msm_acpu_clock_platform_data *clkdata)
 	acpuclk_init();
 	lpj_init();
 	print_acpu_freq_tbl();
+	if (cpu_is_msm7x27())
+		shared_pll_control_init();
 #ifdef CONFIG_CPU_FREQ_MSM
 	cpufreq_table_init();
 	cpufreq_frequency_table_get_attr(freq_table, smp_processor_id());
 #endif
 }
-#endif
