@@ -33,14 +33,13 @@
 
 #include <asm/uaccess.h>
 #include <asm/byteorder.h>
-#include <asm/atomic.h>
 
 #include "smd_rpcrouter.h"
 
 #define SAFETY_MEM_SIZE 65536
 
 /* Next minor # available for a remote server */
-static atomic_t next_minor = ATOMIC_INIT(1);
+static int next_minor = 1;
 
 struct class *msm_rpcrouter_class;
 dev_t msm_rpcrouter_devno;
@@ -241,7 +240,7 @@ int msm_rpcrouter_create_server_cdev(struct rr_server *server)
 	int rc;
 	uint32_t dev_vers;
 
-	if (atomic_read(&next_minor) == RPCROUTER_MAX_REMOTE_SERVERS) {
+	if (next_minor == RPCROUTER_MAX_REMOTE_SERVERS) {
 		printk(KERN_ERR
 		       "rpcrouter: Minor numbers exhausted - Increase "
 		       "RPCROUTER_MAX_REMOTE_SERVERS\n");
@@ -264,7 +263,7 @@ int msm_rpcrouter_create_server_cdev(struct rr_server *server)
 #endif
 
 	server->device_number =
-		MKDEV(MAJOR(msm_rpcrouter_devno), atomic_inc_return(&next_minor));
+		MKDEV(MAJOR(msm_rpcrouter_devno), next_minor++);
 
 	server->device =
 		device_create(msm_rpcrouter_class, rpcrouter_device,

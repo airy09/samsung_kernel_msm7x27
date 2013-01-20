@@ -201,12 +201,19 @@ config MACH_LUCAS
 	default n
 	bool "Lucas"
 	help
-	  Support for the Samsung Lucas board.	  	  
-	  
+	  Support for the Samsung Lucas board.	  
+
 config BOARD_REVISION
 	hex "Select H/W Revision"
 	depends on MACH_EUROPA || MACH_CALLISTO || MACH_COOPER || MACH_GIO || MACH_BENI || MACH_TASS || MACH_TASSDT || MACH_LUCAS
 	default "0x01"
+
+config RECOVERY_REBOOT
+	bool "Recovery reboot fix for Samsung devices"
+	depends on MACH_EUROPA || MACH_CALLISTO || MACH_COOPER || MACH_GIO || MACH_BENI || MACH_TASS || MACH_TASSDT || MACH_LUCAS
+	default n
+	help
+	  Workaround for recovery looping issue on Samsung msm7x27 devices. Use only for building recovery kernels.
 
 config 800MHZ
 	bool "use 800MHz mode"
@@ -1397,7 +1404,6 @@ config BT_MSM_PINTEST
 
 config OVERCLOCK_AHB
 	bool "Overclock the AHB-bus with 50% for all frequencies from 480MHz and above."
-	depends on MSM_CPU_FREQ_SET_MIN_MAX
 	default n
 	help
 	  Increases the speed of memory read/writes but can cause instability.
@@ -1425,6 +1431,3 @@ config SAMSUNG_COOPER_LTN_L
 config SAMSUNG_COOPER_LTN_B
 	bool "select Latin COOPER L"
 # Israel_NetQ 2011.06.30  For Israel B model]
-
-config MACH_TASS_THAILAND_B
-	bool "select Tass Thailand"

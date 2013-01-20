@@ -444,7 +444,7 @@ static int synaptics_ts_probe(
 		printk(KERN_ERR "synaptics_ts_probe: Failed to allocate input device\n");
 		goto err_input_dev_alloc_failed;
 	}
-	ts->input_dev->name = "synaptics-rmi-touchscreen";
+	ts->input_dev->name = "sec_touchscreen";
 	set_bit(EV_ABS, ts->input_dev->evbit);
 
 	printk(KERN_INFO "synaptics_ts_probe: max_x: 240, max_y: 320\n");

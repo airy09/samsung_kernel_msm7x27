@@ -959,7 +959,7 @@ static int msm_control(struct msm_control_device *ctrl_pmsm,
 
 	qcmd_resp = __msm_control(sync,
 				  &ctrl_pmsm->ctrl_q,
-				  qcmd, msecs_to_jiffies(10000));
+				  qcmd, msecs_to_jiffies(10000)); // 10 ms 
 
 	/* ownership of qcmd will be transfered to event queue */
 //	qcmd = NULL;

@@ -1370,6 +1370,7 @@ static int ext3_setup_super(struct super_block *sb, struct ext3_super_block *es,
 	}
 	cleancache_init_fs(sb);
 	return res;
+	cleancache_init_fs(sb);
 }
 
 /* Called at mount-time, super-block is locked */

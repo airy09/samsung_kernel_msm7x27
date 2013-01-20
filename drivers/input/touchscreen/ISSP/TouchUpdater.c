@@ -91,7 +91,7 @@ unsigned char Firmware_Data_HW3[]=
 #if defined(CONFIG_MACH_BENI)
 #include "Firmware_BENI03_HW03.h"
 #elif defined(CONFIG_MACH_GIO)
-#include "Firmware_GIO11_HW03.h"
+#include "Firmware_GIO09_HW03.h"
 #elif defined(CONFIG_MACH_TASSDT)
 #include "Firmware_TASSDT02_HW04.h"
 #else
@@ -134,7 +134,7 @@ unsigned char Firmware_Data_HW22[]=
 unsigned char Firmware_Data_HW23[]= 
 {
 #if defined(CONFIG_MACH_GIO)
-#include "Firmware_GIO11_HW23.h"
+#include "Firmware_GIO09_HW23.h"
 #else
 #include "Firmware_GIO03_HW01.h"
 #endif

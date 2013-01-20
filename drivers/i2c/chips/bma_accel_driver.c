@@ -865,8 +865,8 @@ static ssize_t poll_delay_store(struct device *dev,struct device_attribute *attr
 	int err;
 
 	err = strict_strtoll(buf, 10, &new_delay);
-	if (err < 0)
-		return err;
+	if (err < 0) return err;
+	if (new_delay < 10000000 ) new_delay = 10000000;
 
 	printk("new delay = %lldns, old delay = %lldns\n",
 		    new_delay, ktime_to_ns(g_bma222->acc_poll_delay));
@@ -1156,8 +1156,9 @@ error_device:
 err_input_register_device_light:
 	input_unregister_device(g_bma222->acc_input_dev);
 err_input_allocate_device_light:	
-	destroy_workqueue(g_bma222->wq);
+
 err_create_workqueue:
+	destroy_workqueue(g_bma222->wq);
 	mutex_destroy(&data->power_lock);
 kfree_exit:
 	kfree(data);

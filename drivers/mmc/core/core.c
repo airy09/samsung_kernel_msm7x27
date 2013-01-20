@@ -973,9 +973,6 @@ void mmc_power_off(struct mmc_host *host)
 	host->ios.bus_width = MMC_BUS_WIDTH_1;
 	host->ios.timing = MMC_TIMING_LEGACY;
 	mmc_set_ios(host);
-#ifdef CONFIG_YAFFS_FS
-  mmc_delay(50);
-#endif
 }
 
 /*

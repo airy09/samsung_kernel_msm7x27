@@ -118,9 +118,18 @@ source "drivers/xen/Kconfig"
 
 source "drivers/staging/Kconfig"
 
+source "drivers/uvgio/Kconfig"
+
+source "drivers/uvcooper/Kconfig"
+
+source "drivers/uvbeni/Kconfig"
+
 source "drivers/platform/Kconfig"
 
 source "drivers/dpram/Kconfig"
 
 #source "drivers/param/Kconfig"
+
+source "drivers/zram/Kconfig"
+
 endmenu

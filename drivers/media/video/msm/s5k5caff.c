@@ -1729,7 +1729,6 @@ static struct device_attribute s5k5caff_antibanding_attr = {
 int s5k5caff_sensor_init(const struct msm_camera_sensor_info *data)
 {
 	int rc = 0;
-	int i;
 
 	s5k5caff_ctrl = kzalloc(sizeof(struct s5k5caff_ctrl), GFP_KERNEL);
 	if (!s5k5caff_ctrl) {
@@ -1744,22 +1743,10 @@ int s5k5caff_sensor_init(const struct msm_camera_sensor_info *data)
 	cam_pw(1);
 	
 	rc = cam_hw_init();
-	
 	if(rc < 0)
 	{
-		for(i=0;i<5;i++)
-		{
-			printk("[S5K4ECGX]cam_fw_init failed. try again.\n");
-			cam_pw(0);
-			mdelay(50);
-			cam_pw(1);
-			rc = cam_hw_init();
-
-			if(rc >= 0)
-				break;
-		}
-		if(rc < 0)
-			goto init_fail;
+		printk("<=PCAM=> cam_fw_init failed!\n");
+		goto init_fail;
 	}
 
 #ifdef CONFIG_LOAD_FILE

@@ -32,6 +32,7 @@
 #include <linux/swap.h>
 #include <linux/writeback.h>
 #include <linux/statfs.h>
+#include <linux/cleancache.h>
 #include <linux/compat.h>
 #include <linux/parser.h>
 #include <linux/ctype.h>

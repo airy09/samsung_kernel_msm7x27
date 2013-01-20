@@ -48,7 +48,7 @@
 
 #define DMA_P_BASE      0x90000
 
-#if defined ( CONFIG_MACH_GIO ) || defined(CONFIG_MACH_COOPER)
+#if defined(CONFIG_MACH_COOPER) || defined(CONFIG_MACH_GIO)
 extern int lcd_type_smd;
 #endif
 
@@ -135,7 +135,7 @@ int mdp_lcdc_on(struct platform_device *pdev)
 	buf = (uint8 *) fbi->fix.smem_start;
 	buf += fbi->var.xoffset * bpp + fbi->var.yoffset * fbi->fix.line_length;
 
-#if defined(CONFIG_MACH_TASS) || defined(CONFIG_MACH_TASSDT) || defined(CONFIG_MACH_BENI) || defined(CONFIG_MACH_LUCAS) || defined(CONFIG_MACH_COOPER) || defined(CONFIG_MACH_GIO) || defined(CONFIG_MACH_CALLISTO)
+#if defined(CONFIG_MACH_TASS) || defined(CONFIG_MACH_BENI) || defined(CONFIG_MACH_GIO) || defined(CONFIG_MACH_LUCAS) || defined(CONFIG_MACH_COOPER) || defined(CONFIG_MACH_CALLISTO)
 	dma2_cfg_reg = DMA_PACK_ALIGN_LSB | DMA_DITHER_EN | DMA_OUT_SEL_LCDC;
 #else
 	dma2_cfg_reg = DMA_PACK_ALIGN_LSB | DMA_OUT_SEL_LCDC;
@@ -319,7 +319,7 @@ int mdp_lcdc_on(struct platform_device *pdev)
 		MDP_OUTP(MDP_BASE + timer_base + 0x38, active_v_end);
 	}
 
-#if defined ( CONFIG_MACH_GIO ) || defined(CONFIG_MACH_COOPER) || defined(CONFIG_MACH_CALLISTO)
+#if defined ( CONFIG_MACH_GIO )
 	/* enable LCDC block */
 	MDP_OUTP(MDP_BASE + timer_base, 1);
 	mdp_pipe_ctrl(block, MDP_BLOCK_POWER_ON, FALSE);
@@ -363,10 +363,8 @@ int mdp_lcdc_off(struct platform_device *pdev)
 	}
 #endif
 
-#if defined ( CONFIG_MACH_GIO ) || defined(CONFIG_MACH_COOPER)
+#if defined(CONFIG_MACH_COOPER) || defined(CONFIG_MACH_GIO) 
 	if( lcd_type_smd )
-		ret = panel_next_off(pdev);
-#elif defined( CONFIG_MACH_CALLISTO )
 		ret = panel_next_off(pdev);
 #endif
 
@@ -379,10 +377,10 @@ int mdp_lcdc_off(struct platform_device *pdev)
 
 	printk("[HSIL] %s(%d)  mdp_lcdc_off end\n", __func__, __LINE__);
 
-#if defined ( CONFIG_MACH_GIO ) || defined(CONFIG_MACH_COOPER)
+#if defined(CONFIG_MACH_COOPER) || defined(CONFIG_MACH_GIO)
 	if( lcd_type_smd == 0 )
 		ret = panel_next_off(pdev);
-#elif !defined( CONFIG_MACH_CALLISTO )
+#else
 	ret = panel_next_off(pdev);
 #endif
 

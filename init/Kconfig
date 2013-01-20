@@ -512,6 +512,16 @@ config CGROUP_FREEZER
 	  Provides a way to freeze and unfreeze all tasks in a
 	  cgroup.
 
+config CGROUP_TIMER_SLACK
+        tristate "Timer slack cgroup subsystem"
+        help
+          Provides a way of tasks grouping by timer slack value.
+          Introduces per cgroup timer slack value which will override
+          the default timer slack value once a task is attached to a
+          cgroup.
+          It's useful in mobile devices where certain background apps
+          are attached to a cgroup and combined wakeups are desired.
+
 config CGROUP_DEVICE
 	bool "Device controller for cgroups"
 	depends on CGROUPS && EXPERIMENTAL
@@ -647,6 +657,19 @@ config DEBUG_BLK_CGROUP
 	files in a cgroup which can be useful for debugging.
 
 endif # CGROUPS
+
+config SCHED_AUTOGROUP
+	bool "Automatic process group scheduling"
+	select EVENTFD
+	select CGROUPS
+	select CGROUP_SCHED
+	select FAIR_GROUP_SCHED
+	help
+	  This option optimizes the scheduler for common desktop workloads by
+	  automatically creating and populating task groups.  This separation
+	  of workloads isolates aggressive CPU burners (like build jobs) from
+	  desktop applications.  Task group autogeneration is currently based
+	  upon task session.
 
 config MM_OWNER
 	bool
@@ -1231,6 +1254,14 @@ config MODULE_FORCE_LOAD
 	  Allow loading of modules without version information (ie. modprobe
 	  --force).  Forced module loading sets the 'F' (forced) taint flag and
 	  is usually a really bad idea.
+
+config MODULE_FORCE_VERMAGIC
+	bool "Allow forced loading of modules with bad vermagic"
+	default n
+	depends on MODULE_FORCE_LOAD
+	help
+	  Allow loading of modules with version information that does not match
+	  the currently running kernel. This is very bad.
 
 config MODULE_UNLOAD
 	bool "Module unloading"

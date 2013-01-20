@@ -815,9 +815,8 @@ struct msm_camsensor_info {
 #define EXT_CFG_PREVIEW_SIZE_176x144_QCIF	3
 
 #define EXT_CFG_FLASH_ON		0
-#define EXT_CFG_FLASH_OFF	    1
-#define EXT_CFG_FLASH_AUTO	    2
-#define EXT_CFG_FLASH_TURN_ON   3
-#define EXT_CFG_FLASH_TURN_OFF  4
-#define EXT_CFG_FLASH_TORCH     5
+#define EXT_CFG_FLASH_OFF	1
+#define EXT_CFG_FLASH_AUTO	2
+#define EXT_CFG_FLASH_TURN_ON 3
+#define EXT_CFG_FLASH_TURN_OFF 4
 #endif /* __LINUX_MSM_CAMERA_H */

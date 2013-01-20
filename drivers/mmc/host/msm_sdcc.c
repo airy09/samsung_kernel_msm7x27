@@ -967,7 +967,6 @@ msmsdcc_irq(int irq, void *dev_id)
 			/* Check for data errors */
 			if (status & (MCI_DATACRCFAIL|MCI_DATATIMEOUT|
 				      MCI_TXUNDERRUN|MCI_RXOVERRUN)) {
-  		        pr_err("%s data status (0x%x)\n", mmc_hostname(host->mmc), status);
 				msmsdcc_data_err(host, data, status);
 				host->curr.data_xfered = 0;
 				if (host->dma.sg)
@@ -1275,14 +1274,11 @@ static int msmsdcc_get_ro(struct mmc_host *mmc)
 static void msmsdcc_enable_sdio_irq(struct mmc_host *mmc, int enable)
 {
 	struct msmsdcc_host *host = mmc_priv(mmc);
-	unsigned long flags;
 
 	if (enable) {
-		spin_lock_irqsave(&host->lock, flags);
 		host->mci_irqenable |= MCI_SDIOINTOPERMASK;
 		writel(readl(host->base + MMCIMASK0) | MCI_SDIOINTOPERMASK,
 			       host->base + MMCIMASK0);
-		spin_unlock_irqrestore(&host->lock, flags);
 	} else {
 		host->mci_irqenable &= ~MCI_SDIOINTOPERMASK;
 		writel(readl(host->base + MMCIMASK0) & ~MCI_SDIOINTOPERMASK,

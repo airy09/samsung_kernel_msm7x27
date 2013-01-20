@@ -1211,13 +1211,11 @@ void s5k4ecgx_set_scene(char value)
 		break;
 		case EXT_CFG_SCENE_SUNSET :
 			s5k4ecgx_set_REG_TC_DBG_AutoAlgEnBits(3,0);
-//			S5K4ECGX_WRITE_LIST(s5k4ecgx_Scene_Sunset);
-			S5K4ECGX_WRITE_LIST(s5k4ecgx_WB_Sunny);
+			S5K4ECGX_WRITE_LIST(s5k4ecgx_Scene_Sunset);
 		break;
 		case EXT_CFG_SCENE_DAWN :
 			s5k4ecgx_set_REG_TC_DBG_AutoAlgEnBits(3,0);
-//			S5K4ECGX_WRITE_LIST(s5k4ecgx_Scene_Duskdawn);
-			S5K4ECGX_WRITE_LIST(s5k4ecgx_WB_Fluorescent);
+			S5K4ECGX_WRITE_LIST(s5k4ecgx_Scene_Duskdawn);
 		break;
 		case EXT_CFG_SCENE_FALL :
 			S5K4ECGX_WRITE_LIST(s5k4ecgx_Scene_Fall_Color);
@@ -1744,8 +1742,6 @@ void sensor_ext_config(void __user *arg)
 				else
 					s5k4ecgx_set_flash(MOVIE_FLASH);
 			}
-            else if(ctrl_info.value_1 == EXT_CFG_FLASH_TORCH)
-                s5k4ecgx_set_flash(MOVIE_FLASH);
 			else if(ctrl_info.value_1 == EXT_CFG_FLASH_TURN_OFF)
 				s5k4ecgx_set_flash(FLASH_OFF);
 		break;

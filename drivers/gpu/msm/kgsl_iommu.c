@@ -144,8 +144,7 @@ static int kgsl_get_iommu_ctxt(struct kgsl_iommu *iommu,
 }
 
 static void kgsl_iommu_setstate(struct kgsl_device *device,
-				struct kgsl_pagetable *pagetable,
-				unsigned int context_id)
+				struct kgsl_pagetable *pagetable)
 {
 	struct kgsl_mmu *mmu = &device->mmu;
 
@@ -263,12 +262,12 @@ kgsl_iommu_map(void *mmu_specific_pt,
 	iommu_virt_addr = memdesc->gpuaddr;
 
 	ret = iommu_map_range(domain, iommu_virt_addr, memdesc->sg,
-				memdesc->size, (IOMMU_READ | IOMMU_WRITE));
+				memdesc->size, MSM_IOMMU_ATTR_NONCACHED);
 	if (ret) {
 		KGSL_CORE_ERR("iommu_map_range(%p, %x, %p, %d, %d) "
 				"failed with err: %d\n", domain,
 				iommu_virt_addr, memdesc->sg, memdesc->size,
-				0, ret);
+				MSM_IOMMU_ATTR_NONCACHED, ret);
 		return ret;
 	}
 
@@ -332,3 +331,4 @@ struct kgsl_mmu_pt_ops iommu_pt_ops = {
 	.mmu_pt_equal = kgsl_iommu_pt_equal,
 	.mmu_pt_get_flags = NULL,
 };
+

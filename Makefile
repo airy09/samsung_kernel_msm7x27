@@ -1,8 +1,8 @@
 VERSION = 2
 PATCHLEVEL = 6
-SUBLEVEL = 35
-EXTRAVERSION = .7
-NAME = Yokohama
+SUBLEVEL = 37
+EXTRAVERSION = .6
+NAME = Flesh-Eating Bats with Fangs
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
@@ -191,8 +191,8 @@ export KBUILD_BUILDHOST := $(SUBARCH)
 #ARCH		?= $(SUBARCH)
 #CROSS_COMPILE	?=
 #CROSS_COMPILE	?= $(CONFIG_CROSS_COMPILE:"%"=%)
-ARCH            =arm
-CROSS_COMPILE	= ../../../prebuilt/linux-x86/toolchain/arm-eabi-4.4.3/bin/arm-eabi-
+ARCH            = arm
+CROSS_COMPILE	= eabi-
 
 # Architecture as present in compile.h
 UTS_MACHINE 	:= $(ARCH)
@@ -1100,7 +1100,7 @@ endif # CONFIG_MODULES
 # Directories & files removed with 'make clean'
 CLEAN_DIRS  += $(MODVERDIR)
 CLEAN_FILES +=	vmlinux System.map \
-                .tmp_kallsyms* .tmp_version .tmp_vmlinux* .tmp_System.map
+                .tmp_kallsyms* .tmp_version .tmp_vmlinux* .tmp_System.map boot.img
 
 # Directories & files removed with 'make mrproper'
 MRPROPER_DIRS  += include/config usr/include include/generated

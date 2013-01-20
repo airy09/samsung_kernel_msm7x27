@@ -58,6 +58,7 @@ static int touchkey_status[MAX_KEYS];
 #define TK_STATUS_PRESS		1
 #define TK_STATUS_RELEASE		0
 
+
 static struct workqueue_struct *synaptics_wq;
 static struct workqueue_struct *check_ic_wq;
 
@@ -266,10 +267,10 @@ void TSP_forced_release_forkey(void)
 
 		if(fingerInfo[i].status != -2) continue;
 		
-		input_report_abs(ts_global->input_dev, ABS_MT_POSITION_X, fingerInfo[i].x);
-		input_report_abs(ts_global->input_dev, ABS_MT_POSITION_Y, fingerInfo[i].y);
 		input_report_abs(ts_global->input_dev, ABS_MT_TOUCH_MAJOR, 0);
 		input_report_abs(ts_global->input_dev, ABS_MT_WIDTH_MAJOR, fingerInfo[i].z);
+		input_report_abs(ts_global->input_dev, ABS_MT_POSITION_X, fingerInfo[i].x);
+		input_report_abs(ts_global->input_dev, ABS_MT_POSITION_Y, fingerInfo[i].y);
 		input_mt_sync(ts_global->input_dev);
 
 #ifdef CONFIG_KERNEL_DEBUG_SEC
@@ -316,10 +317,6 @@ static void synaptics_ts_work_func(struct work_struct *work)
 	fingerInfo[1].z = buf[11]/2;
 	fingerInfo[1].id = buf[6] & 0x0f;
 
-#if 1 // when user press in lower touch, touch is poor
-   if(fingerInfo[0].y == 479) fingerInfo[0].y = 478;
-   if(fingerInfo[1].y == 479) fingerInfo[1].y = 478;   
-#endif
 	//	print message
 //	for ( i= 0; i<MAX_USING_FINGER_NUM; i++ )
 //		printk("[TSP] finger[%d].x = %d, finger[%d].y = %d, finger[%d].z = %x, finger[%d].id = %x\n", i, fingerInfo[i].x, i, fingerInfo[i].y, i, fingerInfo[i].z, i, fingerInfo[i].id);
@@ -346,10 +343,10 @@ static void synaptics_ts_work_func(struct work_struct *work)
 				{
 		//			if(fingerInfo[1].id ==0)
 					{
-						input_report_abs(ts->input_dev, ABS_MT_POSITION_X, fingerInfo[2].x);	
-						input_report_abs(ts->input_dev, ABS_MT_POSITION_Y, fingerInfo[2].y);
 						input_report_abs(ts->input_dev, ABS_MT_TOUCH_MAJOR, 0);
 						input_report_abs(ts->input_dev, ABS_MT_WIDTH_MAJOR, fingerInfo[2].z);
+						input_report_abs(ts->input_dev, ABS_MT_POSITION_X, fingerInfo[2].x);	
+						input_report_abs(ts->input_dev, ABS_MT_POSITION_Y, fingerInfo[2].y);
 						input_mt_sync(ts->input_dev);
 						input_sync(ts->input_dev);
 
@@ -364,10 +361,10 @@ static void synaptics_ts_work_func(struct work_struct *work)
 					
 					if(ABS(fingerInfo[2].x,fingerInfo[0].x)>180)
 					{
-						input_report_abs(ts->input_dev, ABS_MT_POSITION_X, fingerInfo[2].x);	
-						input_report_abs(ts->input_dev, ABS_MT_POSITION_Y, fingerInfo[2].y);
 						input_report_abs(ts->input_dev, ABS_MT_TOUCH_MAJOR, 0);
 						input_report_abs(ts->input_dev, ABS_MT_WIDTH_MAJOR, fingerInfo[2].z);
+						input_report_abs(ts->input_dev, ABS_MT_POSITION_X, fingerInfo[2].x);	
+						input_report_abs(ts->input_dev, ABS_MT_POSITION_Y, fingerInfo[2].y);
 						input_mt_sync(ts->input_dev);
 						input_sync(ts->input_dev);
 
@@ -378,10 +375,10 @@ static void synaptics_ts_work_func(struct work_struct *work)
 					}
 					else if(ABS(fingerInfo[2].y,fingerInfo[0].y)>180)
 					{
-						input_report_abs(ts->input_dev, ABS_MT_POSITION_X, fingerInfo[2].x);	
-						input_report_abs(ts->input_dev, ABS_MT_POSITION_Y, fingerInfo[2].y);
 						input_report_abs(ts->input_dev, ABS_MT_TOUCH_MAJOR, 0);
 						input_report_abs(ts->input_dev, ABS_MT_WIDTH_MAJOR, fingerInfo[2].z);
+						input_report_abs(ts->input_dev, ABS_MT_POSITION_X, fingerInfo[2].x);	
+						input_report_abs(ts->input_dev, ABS_MT_POSITION_Y, fingerInfo[2].y);
 						input_mt_sync(ts->input_dev);
 						input_sync(ts->input_dev);
 
@@ -424,10 +421,10 @@ static void synaptics_ts_work_func(struct work_struct *work)
 
 		if(fingerInfo[i].status < 0) continue;
 		
-		input_report_abs(ts->input_dev, ABS_MT_POSITION_X, fingerInfo[i].x);
-		input_report_abs(ts->input_dev, ABS_MT_POSITION_Y, fingerInfo[i].y);
 		input_report_abs(ts->input_dev, ABS_MT_TOUCH_MAJOR, fingerInfo[i].status);
 		input_report_abs(ts->input_dev, ABS_MT_WIDTH_MAJOR, fingerInfo[i].z);
+		input_report_abs(ts->input_dev, ABS_MT_POSITION_X, fingerInfo[i].x);
+		input_report_abs(ts->input_dev, ABS_MT_POSITION_Y, fingerInfo[i].y);
 		input_mt_sync(ts->input_dev);
 
 #ifdef CONFIG_KERNEL_DEBUG_SEC
@@ -616,10 +613,11 @@ static int synaptics_ts_probe(
 	set_bit(EV_ABS, ts->input_dev->evbit);
 
 	printk(KERN_INFO "synaptics_ts_probe: max_x: 320, max_y: 480\n");
-	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_X, 0, MAX_X, 0, 0);
-	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_Y, 0, MAX_Y, 0, 0);
+	
 	input_set_abs_params(ts->input_dev, ABS_MT_TOUCH_MAJOR, 0, 255, 0, 0);
 	input_set_abs_params(ts->input_dev, ABS_MT_WIDTH_MAJOR, 0, 255, 0, 0);
+	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_X, 0, MAX_X, 0, 0);
+	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_Y, 0, MAX_Y, 0, 0);
 
 	for(key = 0; key < MAX_KEYS ; key++)
 		input_set_capability(ts->input_dev, EV_KEY, touchkey_keycodes[key]);
@@ -799,7 +797,7 @@ static int synaptics_ts_suspend(struct i2c_client *client, pm_message_t mesg)
 	int ret;
 	struct synaptics_ts_data *ts = i2c_get_clientdata(client);
 	struct vreg *vreg_touch;
-	printk("[TSP] %s+\n", __func__ );
+	//printk("[TSP] %s+\n", __func__ );
 
 	vreg_touch = vreg_get(NULL, "ldo6");
 
@@ -854,7 +852,7 @@ static int synaptics_ts_resume(struct i2c_client *client)
 	uint8_t i2c_addr = 0x1D;
 	uint8_t buf[1];
 
-	printk("[TSP] %s+\n", __func__ );
+	//printk("[TSP] %s+\n", __func__ );
 	if( touch_present )
 	{
 

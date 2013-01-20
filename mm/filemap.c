@@ -118,6 +118,16 @@
 void __delete_from_page_cache(struct page *page)
 {
 	struct address_space *mapping = page->mapping;
+	
+	/*
+	 * if we're uptodate, flush out into the cleancache, otherwise
+	 * invalidate any existing cleancache entries.  We can't leave
+	 * stale data around in the cleancache once our page is gone
+	 * */
+	if (PageUptodate(page))
+	  cleancache_put_page(page);
+	else
+	  cleancache_flush_page(mapping, page);
 
 	/*
 	 * if we're uptodate, flush out into the cleancache, otherwise

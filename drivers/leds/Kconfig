@@ -178,7 +178,6 @@ config LEDS_LP3944
 
 config LEDS_CPLD
 	tristate "LED Support for CPLD connected LEDs"
-	default y
 	depends on LEDS_CLASS
 	help
 	  This option enables support for the LEDs connected to CPLD
@@ -268,6 +267,32 @@ config LEDS_BD2802
 	  This option enables support for BD2802GU RGB LED driver chips
 	  accessed via the I2C bus.
 
+config LEDS_MSM_PMIC
+        tristate "LED Support for Qualcomm PMIC connected LEDs"
+        default y
+        depends on ARCH_MSM
+        help
+          This option enables support for LEDs connected over PMIC
+          (Power Management IC) chip on Qualcomm reference boards,
+          for example SURF and FFAs.
+
+config KEYPAD_TOUCH_BLN
+	bool "BLN touch keypad: use backlight notification"
+	depends on LEDS_MSM_PMIC
+	default y
+	help
+	  Say Y here to enable the backlight notification
+	  for android led-notification (modified liblight needed)
+
+config LEDS_PMIC8058
+	tristate "LED Support for Qualcomm PMIC8058"
+	default n
+	depends on PMIC8058
+	help
+	  This option enables support for LEDs connected over PMIC8058
+	  (Power Management IC) chip on Qualcomm reference boards,
+	  for example SURF and FFAs.
+
 config LEDS_INTEL_SS4200
 	tristate "LED driver for Intel NAS SS4200 series"
 	depends on PCI && DMI
@@ -308,6 +333,14 @@ config LEDS_MC13783
 	help
 	  This option enable support for on-chip LED drivers found
 	  on Freescale Semiconductor MC13783 PMIC.
+
+config LEDS_QCIBL
+	tristate "LED Support for Quanta LCD backlight"
+	depends on SENSORS_WPCE775X && ARCH_MSM_SCORPION
+	default n
+	help
+	  Say Y here if you want to use the Quanta backlight driver for ST15
+	  platform.
 
 config LEDS_TRIGGERS
 	bool "LED Trigger support"

@@ -41,13 +41,10 @@
 #include <linux/wakelock.h>
 
 #include "dpram.h"
-
-#ifndef CONFIG_YAFFS_FS
 // DGS
-#include "../tfsr/Inc/FSR.h"
-#include "../tfsr/Inc/FSR_BML.h"
-#include "../tfsr/Inc/FSR_LLD_4K_OneNAND.h"
-#endif /* CONFIG_YAFFS_FS */
+#include "./fsr/Inc/FSR.h"
+#include "./fsr/Inc/FSR_BML.h"
+#include "./fsr/Inc/FSR_LLD_4K_OneNAND.h"
 
 #include "../../arch/arm/mach-msm/smd_private.h"
 #include "../../arch/arm/mach-msm/proc_comm.h"
@@ -122,9 +119,6 @@ static struct tty_struct *dpram_tty[MAX_INDEX];
 static struct ktermios *dpram_termios[MAX_INDEX];
 static struct ktermios *dpram_termios_locked[MAX_INDEX];
 
-#ifdef CONFIG_YAFFS_FS
-extern int msm_nand_read_dpram(char *mBuf, unsigned size);
-#endif /* CONFIG_YAFFS_FS */
 extern void *smem_alloc(unsigned, unsigned);
 
 // hsil for cpufreq
@@ -142,7 +136,6 @@ static int dpram_get_dgs(void);
 static void res_ack_tasklet_handler(unsigned long data);
 static void send_tasklet_handler(unsigned long data);
 
-#ifndef CONFIG_YAFFS_FS
 // [BML functions for DGS
 INT32   (*bml_open)(UINT32        nVol, UINT32        nFlag);
 VOID    (*bml_acquireSM)(UINT32        nVol);
@@ -153,7 +146,6 @@ EXPORT_SYMBOL(bml_acquireSM);
 EXPORT_SYMBOL(ond_4k_read);
 EXPORT_SYMBOL(bml_release);
 // ]
-#endif /* CONFIG_YAFFS_FS */
 
 static DECLARE_TASKLET(fmt_send_tasklet, send_tasklet_handler, 0);
 static DECLARE_TASKLET(raw_send_tasklet, send_tasklet_handler, 0);
@@ -909,19 +901,19 @@ static int dpram_get_dgs(void)
 	int                   nRet;		
 #if DGS_TEST
 	typedef struct{
-		UINT8 header_code[4];  // magic ?箕?   // {0x7F,0xAA,0xAF,0x7E}
-		UINT8 model[20];       // ?醍㉧?
-		UINT8 nature[40];      // ??????
-		UINT8 custt_code[8];   // ?킹???
-		UINT8 date[14];        // ???? ??????
-		UINT8 charger[24];     // ??????
-		UINT8 version[20];     // SW ??????
+		UINT8 header_code[4];  // magic 넘버   // {0x7F,0xAA,0xAF,0x7E}
+		UINT8 model[20];       // 모델명
+		UINT8 nature[40];      // 출항지
+		UINT8 custt_code[8];   // 거래선
+		UINT8 date[14];        // 버전 발행일
+		UINT8 charger[24];     // 담당자
+		UINT8 version[20];     // SW 버전명
 		UINT8 checksum[10];    // binary ckecksum
 		UINT8 crcsum[10];      // binary CRC
 		UINT8 Unique_Number[20];  // UN number
-		UINT8 mem_name[20];    // ?貧??? ??
+		UINT8 mem_name[20];    // 메모리 명
 		UINT8 sec_code[20];    // 
-		UINT8 etc[40];         // ??타
+		UINT8 etc[40];         // 기타
     }NAND_HEAD_INFO;
 	NAND_HEAD_INFO header_info = {{0x7F,0xAA,0xAF,0x7E}, {"GT-I5500"}, {"EUR-Open"}, {"TIM"},
 								{"2010-03-25"}, {"LKH"}, {"I5500AIJC3"}, {"C721"}, {"41D7"}, 
@@ -930,7 +922,6 @@ static int dpram_get_dgs(void)
 
 	printk("[DPRAM] Start getting DGS info.\n");
 
-#ifndef CONFIG_YAFFS_FS
 	if(bml_open == NULL || bml_acquireSM == NULL || ond_4k_read == NULL || bml_release == NULL)
 	{
 		printk(KERN_ERR "[DPRAM] bml functions are not initilized yet!!\n");
@@ -957,19 +948,12 @@ static int dpram_get_dgs(void)
 
 	/* Release SM*/
 	bml_release(0);
-#else /* CONFIG_YAFFS_FS */
-        nRet = msm_nand_read_dpram(aDGSBuf, sizeof(aDGSBuf));
-#endif /* CONFIG_YAFFS_FS */
 
 #if DGS_TEST
 	memcpy(aDGSBuf, &header_info,sizeof(NAND_HEAD_INFO));
 #endif
 
-#ifndef CONFIG_YAFFS_FS
 	if(nRet != FSR_LLD_SUCCESS)
-#else /* CONFIG_YAFFS_FS */
-        if(0 != nRet)
-#endif /* CONFIG_YAFFS_FS */
 	{
 		printk("[DPRAM] Reading DGS information failed !!\n");
 		return -1;

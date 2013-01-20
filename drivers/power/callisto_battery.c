@@ -1190,7 +1190,7 @@ int calculate_batt_voltage(int vbatt_adc)
 	static int batt_val[BATT_BUF] = {0,};
 	int i = 0;
 
-//[Security log: false waring log]	printk("[Battery] %s : vbatt_adc %d \n", __func__, vbatt_adc);
+	printk("[Battery] %s : vbatt_adc %d \n", __func__, vbatt_adc);
 	
 	if(vbatt_adc >= BATT_FULL_ADC)
 	{
@@ -2637,8 +2637,8 @@ static int  msm_batt_handle_event(void)
 
 	if (msm_batt_info.type_of_event & SUSPEND_EVENT) {
 
-/* [Security log: false waringing] 			printk(KERN_INFO "%s(): Handle Suspend event. event = %08x\n",
-				__func__, msm_batt_info.type_of_event); */
+		printk(KERN_INFO "%s(): Handle Suspend event. event = %08x\n",
+				__func__, msm_batt_info.type_of_event);
 
 		rc = msm_batt_handle_suspend();
 
@@ -2646,8 +2646,8 @@ static int  msm_batt_handle_event(void)
 
 	} else if (msm_batt_info.type_of_event & RESUME_EVENT) {
 
-/* [Security log: false waringing] 		printk(KERN_INFO "%s(): Handle Resume event. event = %08x\n",
-				__func__, msm_batt_info.type_of_event); */
+		printk(KERN_INFO "%s(): Handle Resume event. event = %08x\n",
+				__func__, msm_batt_info.type_of_event);
 
 		rc = msm_batt_handle_resume();
 

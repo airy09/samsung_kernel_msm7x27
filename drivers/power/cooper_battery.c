@@ -1719,7 +1719,7 @@ static int check_charging_status(int oldChargingState)
 	}
 #endif	
 
-	printk("[Battery] Currnet Charging state [%x], Batt temp [%d],  Batt Level [%d], Percent [%d]\n", dwChargingState, msm_batt_info.battery_Celsius, msm_batt_info.battery_level, msm_batt_info.batt_capacity);
+	//printk("[Battery] Currnet Charging state [%x, %x]  Batt Level [%d] Percent [%d]\n", dwChargingState, msm_batt_info.battery_Celsius, msm_batt_info.battery_level, msm_batt_info.batt_capacity);
 	
 	if(oldChargingState!= dwChargingState)
 	{

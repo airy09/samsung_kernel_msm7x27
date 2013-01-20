@@ -67,7 +67,7 @@ struct eth_dev {
 
 	spinlock_t		req_lock;	/* guard {rx,tx}_reqs */
 	struct list_head	tx_reqs, rx_reqs;
-	unsigned		tx_qlen;
+	atomic_t		tx_qlen;
 
 	struct sk_buff_head	rx_frames;
 
@@ -249,11 +249,13 @@ rx_submit(struct eth_dev *dev, struct usb_request *req, gfp_t gfp_flags)
 		goto enomem;
 	}
 
+#ifndef CONFIG_USB_ANDROID_RNDIS_DWORD_ALIGNED
 	/* Some platforms perform better when IP packets are aligned,
 	 * but on at least one, checksumming fails otherwise.  Note:
 	 * RNDIS headers involve variable numbers of LE32 values.
 	 */
 	skb_reserve(skb, NET_IP_ALIGN);
+#endif
 
 	req->buf = skb->data;
 	req->length = size;
@@ -483,7 +485,11 @@ static void tx_complete(struct usb_ep *ep, struct usb_request *req)
 	list_add(&req->list, &dev->tx_reqs);
 	spin_unlock(&dev->req_lock);
 	dev_kfree_skb_any(skb);
-
+#ifdef CONFIG_USB_ANDROID_RNDIS_DWORD_ALIGNED
+	if (req->buf != skb->data)
+		kfree(req->buf);
+#endif
+	atomic_dec(&dev->tx_qlen);
 	if (netif_carrier_ok(dev->net))
 		netif_wake_queue(dev->net);
 }
@@ -576,7 +582,21 @@ static netdev_tx_t eth_start_xmit(struct sk_buff *skb,
 
 		length = skb->len;
 	}
+
+#ifdef CONFIG_USB_ANDROID_RNDIS_DWORD_ALIGNED
+    if ((int)skb->data & 3) {
+		req->buf = kmalloc(skb->len, GFP_ATOMIC);
+		if (!req->buf)
+			goto drop;
+		memcpy((void *)req->buf, (void *)skb->data, skb->len);
+	}
+	else {
+		req->buf = skb->data;
+	}
+#else
 	req->buf = skb->data;
+#endif
+
 	req->context = skb;
 	req->complete = tx_complete;
 
@@ -598,18 +618,10 @@ static netdev_tx_t eth_start_xmit(struct sk_buff *skb,
 	req->length = length;
 
 	/* throttle highspeed IRQ rate back slightly */
-	if (gadget_is_dualspeed(dev->gadget) &&
-			 (dev->gadget->speed == USB_SPEED_HIGH)) {
-		dev->tx_qlen++;
-		if (dev->tx_qlen == qmult) {
-			req->no_interrupt = 0;
-			dev->tx_qlen = 0;
-		} else {
-			req->no_interrupt = 1;
-		}
-	} else {
-		req->no_interrupt = 0;
-	}
+	if (gadget_is_dualspeed(dev->gadget))
+		req->no_interrupt = (dev->gadget->speed == USB_SPEED_HIGH)
+			? ((atomic_read(&dev->tx_qlen) % qmult) != 0)
+			: 0;
 
 	retval = usb_ep_queue(in, req, GFP_ATOMIC);
 	switch (retval) {
@@ -618,12 +630,17 @@ static netdev_tx_t eth_start_xmit(struct sk_buff *skb,
 		break;
 	case 0:
 		net->trans_start = jiffies;
+		atomic_inc(&dev->tx_qlen);
 	}
 
 	if (retval) {
 		dev_kfree_skb_any(skb);
 drop:
 		dev->net->stats.tx_dropped++;
+#ifdef CONFIG_USB_ANDROID_RNDIS_DWORD_ALIGNED
+		if (req->buf != skb->data)
+			kfree(req->buf);
+#endif
 		spin_lock_irqsave(&dev->req_lock, flags);
 		if (list_empty(&dev->tx_reqs))
 			netif_start_queue(net);
@@ -643,7 +660,7 @@ static void eth_start(struct eth_dev *dev, gfp_t gfp_flags)
 	rx_fill(dev, gfp_flags);
 
 	/* and open the tx floodgates */
-	dev->tx_qlen = 0;
+	atomic_set(&dev->tx_qlen, 0);
 	netif_wake_queue(dev->net);
 }
 
@@ -844,6 +861,9 @@ int gether_setup_name(struct usb_gadget *g, u8 ethaddr[ETH_ALEN],
 		dev_dbg(&g->dev, "register_netdev failed, %d\n", status);
 		free_netdev(net);
 	} else {
+		INFO(dev, "MAC %pM\n", net->dev_addr);
+		INFO(dev, "HOST MAC %pM\n", dev->host_mac);
+
 		the_dev = dev;
 	}
 
@@ -862,8 +882,9 @@ void gether_cleanup(void)
 		return;
 
 	unregister_netdev(the_dev->net);
-	flush_work_sync(&the_dev->work);
 	free_netdev(the_dev->net);
+
+	flush_scheduled_work();
 
 	the_dev = NULL;
 }
